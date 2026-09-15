@@ -1,8 +1,8 @@
 /**
- * Quote reale USDY → USDC sul Whirlpool di uscita, senza chiavi né invii.
- * Serve a tarare SWAP_SLIPPAGE_BPS e a verificare la profondità del pool.
+ * Real USDY → USDC quote on the exit Whirlpool. No keys, nothing submitted.
+ * Use it to calibrate SWAP_SLIPPAGE_BPS and to check the pool's depth.
  *
- *   RPC=https://... npx tsx scripts/quote-orca.ts [importi USDY separati da spazio]
+ *   RPC=https://... npx tsx scripts/quote-orca.ts [space-separated USDY amounts]
  */
 import { createSolanaRpc } from '@solana/kit';
 import { loadOrcaContext, quoteUsdyToUsdc, spotPrice } from '../src/build/orca.js';
@@ -19,7 +19,7 @@ async function main() {
 
   console.log(`slot ${slot}`);
   console.log(`pool  tick=${ctx.pool.tickCurrentIndex} feeRate=${ctx.pool.feeRate} (${(ctx.pool.feeRate / 1e4).toFixed(2)}%)`);
-  console.log(`L in-range = ${ctx.pool.liquidity}`);
+  console.log(`in-range L = ${ctx.pool.liquidity}`);
   console.log(`spot USDY→USDC = ${spot.toFixed(6)}`);
   console.log(`tick arrays: ${ctx.tickArrays.join(' ')}\n`);
 
@@ -31,7 +31,7 @@ async function main() {
     const avg = out / inn;
     console.log(
       `${String(amt).padStart(8)} USDY → ${out.toFixed(2).padStart(12)} USDC   ` +
-        `px medio ${avg.toFixed(6)}   impatto ${(((avg / spot) - 1) * 100).toFixed(4)}%   ` +
+        `avg px ${avg.toFixed(6)}   impact ${(((avg / spot) - 1) * 100).toFixed(4)}%   ` +
         `fee ${(Number(q.tradeFee) / 1e6).toFixed(4)}   min ${(Number(q.tokenMinOut) / 1e6).toFixed(2)}`,
     );
   }

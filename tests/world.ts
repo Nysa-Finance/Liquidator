@@ -8,12 +8,12 @@ import {
 } from '@solana/kit';
 
 /**
- * Mondo locale: LiteSVM caricato con i programmi e lo stato reali di mainnet,
- * scaricati da `npm run fixtures`.
+ * Local world: LiteSVM loaded with the real mainnet programs and state pulled by
+ * `npm run fixtures`.
  *
- * È un fork *statico*: nessuna rete, nessuna chiave con fondi, nessun invio.
- * Si possono riscrivere gli account a piacere — in particolare il feed Scope,
- * che è il modo per rendere liquidabile una posizione senza aspettare il mercato.
+ * It is a *static* fork: no network, no funded key, nothing submitted. Accounts
+ * can be rewritten at will — in particular the Scope feed, which is how a
+ * position is made liquidatable without waiting for the market to move.
  */
 
 const FIX = new URL('../fixtures/', import.meta.url).pathname;
@@ -28,7 +28,7 @@ export type Manifest = {
 export type World = {
   svm: LiteSVM;
   manifest: Manifest;
-  /** slot e timestamp correnti del mondo simulato */
+  /** current slot and timestamp of the simulated world */
   slot: bigint;
   unixTimestamp: bigint;
 };
@@ -66,7 +66,7 @@ export async function loadWorld(opts: { sigverify?: boolean } = {}): Promise<Wor
   return world;
 }
 
-/** Allinea Clock e slot: klend controlla sia lo slot (staleness) sia il timestamp (età prezzo). */
+/** Aligns Clock and slot: klend checks both the slot (staleness) and the timestamp (price age). */
 export function setClock(world: World, slot: bigint, unixTimestamp: bigint): void {
   world.svm.warpToSlot(slot);
   world.svm.setClock(new Clock(slot, 0n, slot / 432_000n, slot / 432_000n, unixTimestamp));
@@ -74,18 +74,18 @@ export function setClock(world: World, slot: bigint, unixTimestamp: bigint): voi
   world.unixTimestamp = unixTimestamp;
 }
 
-/** Avanza il mondo di `slots` slot (≈400 ms ciascuno). */
+/** Advances the world by `slots` slots (~400 ms each). */
 export function advance(world: World, slots: bigint): void {
   setClock(world, world.slot + slots, world.unixTimestamp + (slots * 4n) / 10n);
 }
 
 // ── Scope ───────────────────────────────────────────────────────────────────
-// OraclePrices = discriminante(8) + oracle_mappings: Pubkey(32) + prices: [DatedPrice; 512]
+// OraclePrices = discriminator(8) + oracle_mappings: Pubkey(32) + prices: [DatedPrice; 512]
 // DatedPrice   = { value: u64, exp: u64, last_updated_slot: u64, unix_timestamp: u64,
-//                  generic_data: [u8; 24] }   →  56 byte
-// klend legge questo account DIRETTAMENTE (nessuna CPI a Scope): verifica solo che
-// l'indirizzo coincida con reserve.config.tokenInfo.scopeConfiguration.priceFeed.
-// Riscrivere questi byte è quindi il modo per muovere i prezzi nel mondo locale.
+//                  generic_data: [u8; 24] }   →  56 bytes
+// klend reads this account DIRECTLY (no CPI into Scope): it only checks that the
+// address matches reserve.config.tokenInfo.scopeConfiguration.priceFeed.
+// Rewriting these bytes is therefore how prices are moved in the local world.
 const SCOPE_PREFIX = 8 + 32;
 const DATED_PRICE_SIZE = 56;
 
@@ -95,7 +95,7 @@ export function scopeEntryOffset(index: number): number {
 
 export function readScopePrice(world: World, feed: Address, index: number) {
   const acc = world.svm.getAccount(feed);
-  if (!acc || !('data' in acc) || !acc.data) throw new Error(`feed Scope ${feed} assente`);
+  if (!acc || !('data' in acc) || !acc.data) throw new Error(`Scope feed ${feed} missing`);
   const b = Buffer.from(acc.data as Uint8Array);
   const o = scopeEntryOffset(index);
   const value = b.readBigUInt64LE(o);
@@ -110,12 +110,12 @@ export function readScopePrice(world: World, feed: Address, index: number) {
 }
 
 /**
- * Riscrive un prezzo Scope e lo timbra allo slot/timestamp correnti del mondo,
- * così `max_age_price_seconds` è soddisfatto.
+ * Rewrites a Scope price and stamps it with the world's current slot/timestamp,
+ * so that `max_age_price_seconds` is satisfied.
  */
 export function setScopePrice(world: World, feed: Address, index: number, price: number, exp = 8): void {
   const acc = world.svm.getAccount(feed);
-  if (!acc || !('data' in acc) || !acc.data) throw new Error(`feed Scope ${feed} assente`);
+  if (!acc || !('data' in acc) || !acc.data) throw new Error(`Scope feed ${feed} missing`);
   const b = Buffer.from(acc.data as Uint8Array);
   const o = scopeEntryOffset(index);
   b.writeBigUInt64LE(BigInt(Math.round(price * 10 ** exp)), o);
@@ -132,14 +132,14 @@ export function setScopePrice(world: World, feed: Address, index: number, price:
   } as never);
 }
 
-/** Ritimbra un prezzo esistente senza cambiarne il valore (per far scadere / rinfrescare l'età). */
+/** Re-stamps an existing price without changing its value (to age or refresh it). */
 export function touchScopePrice(world: World, feed: Address, index: number): void {
   const cur = readScopePrice(world, feed, index);
   setScopePrice(world, feed, index, cur.price, Number(cur.exp));
 }
 
-// ── Token account forgiati ──────────────────────────────────────────────────
-// Un SPL token account è 165 byte: mint(32) owner(32) amount(u64) delegate(36)
+// ── Forged token accounts ───────────────────────────────────────────────────
+// An SPL token account is 165 bytes: mint(32) owner(32) amount(u64) delegate(36)
 // state(1) isNative(12) delegatedAmount(u64) closeAuthority(36).
 const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
@@ -162,7 +162,7 @@ export function forgeTokenAccount(
   b.writeUInt32LE(0, 129);  // closeAuthority: COption::None
   world.svm.setAccount({
     address: ata,
-    lamports: 2_039_280n, // rent-exempt per 165 byte
+    lamports: 2_039_280n, // rent-exempt minimum for 165 bytes
     data: new Uint8Array(b),
     programAddress: TOKEN_PROGRAM,
     executable: false,

@@ -13,11 +13,11 @@ import { log } from './logger.js';
 export type RpcClient = Rpc<SolanaRpcApi>;
 
 /**
- * Pool di RPC con failover.
+ * RPC pool with failover.
  *
- * Regola: uno *snapshot* di valutazione non deve mai mescolare dati provenienti
- * da endpoint diversi, altrimenti lo slot di riferimento non è definito.
- * Per questo `active()` restituisce sempre lo stesso client finché è sano.
+ * Rule: a single evaluation *snapshot* must never mix data from different
+ * endpoints, or the reference slot is undefined. That is why `active()` keeps
+ * returning the same client for as long as it is healthy.
  */
 export class RpcPool {
   private readonly clients: RpcClient[];
@@ -26,7 +26,7 @@ export class RpcPool {
 
   constructor(urls: string[]) {
     const valid = urls.filter((u) => u.length > 0);
-    if (valid.length === 0) throw new Error('Nessun RPC configurato');
+    if (valid.length === 0) throw new Error('No RPC endpoint configured');
     this.clients = valid.map((u) => createSolanaRpc(u));
   }
 
@@ -34,7 +34,7 @@ export class RpcPool {
     return this.clients[this.idx]!;
   }
 
-  /** Da chiamare dopo ogni errore di rete; promuove il successivo dopo 3 strike. */
+  /** Call after every network error; promotes the next endpoint after 3 strikes. */
   reportFailure(err: unknown): void {
     this.strikes += 1;
     log.warn({ err: String(err), strikes: this.strikes }, 'rpc failure');
@@ -62,6 +62,6 @@ export function makeSubscriptions() {
 export async function loadSigner(): Promise<KeyPairSigner> {
   const raw = await readFile(CFG.keypairPath, 'utf8');
   const bytes = Uint8Array.from(JSON.parse(raw) as number[]);
-  if (bytes.length !== 64) throw new Error(`Keypair inattesa: ${bytes.length} byte, attesi 64`);
+  if (bytes.length !== 64) throw new Error(`Unexpected keypair: ${bytes.length} bytes, expected 64`);
   return createKeyPairSignerFromBytes(bytes);
 }

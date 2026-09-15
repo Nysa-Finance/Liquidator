@@ -3,31 +3,31 @@ import type { RpcClient } from './rpc.js';
 import { KLEND_PROGRAM } from './config.js';
 
 /**
- * Prefiltro di salute su TUTTE le obligation di un market, in una sola chiamata.
+ * Health prefilter over EVERY obligation of a market, in a single RPC call.
  *
- * L'idea: `getProgramAccounts` accetta un `dataSlice`, cioè permette di farsi
- * restituire solo una finestra di byte di ogni account. Invece di scaricare
- * 106.000 obligation × 3.344 byte (≈355 MB) se ne scaricano 64 byte ciascuna
- * (≈7 MB) — abbastanza per sapere chi è sopra la soglia di liquidazione.
+ * The idea: `getProgramAccounts` accepts a `dataSlice`, i.e. it can return only
+ * a window of bytes per account. Instead of downloading 106,000 obligations ×
+ * 3,344 bytes (~355 MB) we download 64 bytes each (~7 MB) — enough to know who
+ * sits above the liquidation threshold.
  *
- * Una obligation è sopra soglia quando
+ * An obligation is above threshold when
  *     borrow_factor_adjusted_debt_value_sf >= unhealthy_borrow_value_sf
- * (entrambi sono valori in USD scalati: il denominatore dell'LTV è lo stesso,
- * quindi il rapporto fra i due È il rapporto fra LTV e soglia).
+ * (both are scaled USD values sharing the same LTV denominator, so their ratio
+ * IS the ratio between LTV and threshold).
  *
- * ATTENZIONE: questi campi contengono lo stato dell'ULTIMO `refresh_obligation`
- * andato a buon fine, non lo stato ai prezzi di adesso. Il risultato è una lista
- * di CANDIDATI da verificare, non un elenco di certezze.
+ * WARNING: these fields hold the state of the LAST successful
+ * `refresh_obligation`, not the state at current prices. The output is a list of
+ * CANDIDATES to verify, not a list of certainties.
  */
 
-/** OBLIGATION_SIZE (3336) + 8 byte di discriminante Anchor. */
+/** OBLIGATION_SIZE (3336) + 8 bytes of Anchor discriminator. */
 export const OBLIGATION_ACCOUNT_SIZE = 3344;
 
 /**
- * Offset dei campi dentro l'account, discriminante inclusa.
- * Ricavati empiricamente e ri-verificati dal test `tests/live.readonly.test.ts`
- * confrontandoli con il decoder ufficiale dell'SDK: se Kamino cambia la struct,
- * quel test fallisce invece di lasciar passare numeri sbagliati.
+ * Field offsets inside the account, discriminator included.
+ * Derived empirically and re-verified by `tests/live.readonly.test.ts` against
+ * the official SDK decoder: if Kamino changes the struct, that test fails
+ * instead of letting wrong numbers through.
  */
 export const OBLIGATION_OFFSETS = {
   lendingMarket: 32,
@@ -38,7 +38,7 @@ export const OBLIGATION_OFFSETS = {
   unhealthyBorrowValueSf: 2256,
 } as const;
 
-/** Finestra che copre i quattro valori aggregati in fondo alla struct. */
+/** Window covering the four aggregate values at the tail of the struct. */
 export const HEALTH_WINDOW = {
   offset: OBLIGATION_OFFSETS.borrowFactorAdjustedDebtValueSf,
   length: 64,
@@ -46,14 +46,14 @@ export const HEALTH_WINDOW = {
 
 export type HealthRow = {
   obligation: Address;
-  /** debito aggiustato per borrow factor, in unità scalate 2^60 */
+  /** borrow-factor-adjusted debt, in 2^60-scaled units */
   debtValueSf: bigint;
   borrowedAssetsValueSf: bigint;
   allowedBorrowValueSf: bigint;
   unhealthyBorrowValueSf: bigint;
-  /** 1,0 = esattamente sulla soglia di liquidazione; > 1 = sopra */
+  /** 1.0 = exactly at the liquidation threshold; > 1 = above it */
   healthRatio: number;
-  /** 1,0 = esattamente al limite di indebitamento */
+  /** 1.0 = exactly at the borrow limit */
   borrowUtilization: number;
 };
 
@@ -71,7 +71,7 @@ export function decodeHealthWindow(obligation: Address, data: Buffer): HealthRow
   const allowedBorrowValueSf = readU128LE(data, OBLIGATION_OFFSETS.allowedBorrowValueSf - base);
   const unhealthyBorrowValueSf = readU128LE(data, OBLIGATION_OFFSETS.unhealthyBorrowValueSf - base);
 
-  if (debtValueSf === 0n || unhealthyBorrowValueSf === 0n) return null; // nessun debito utile
+  if (debtValueSf === 0n || unhealthyBorrowValueSf === 0n) return null; // no usable debt
 
   return {
     obligation,
@@ -85,19 +85,19 @@ export function decodeHealthWindow(obligation: Address, data: Buffer): HealthRow
   };
 }
 
-/** Valore in USD di un campo scalato 2^60. */
+/** USD value of a 2^60-scaled field. */
 export function sfToUsd(sf: bigint): number {
   return Number(sf) / SF;
 }
 
 export type ScanOptions = {
   /**
-   * Scarta le posizioni sotto questa soglia di debito in USD.
+   * Drop positions below this debt threshold, in USD.
    *
-   * Serve davvero: sul Main Market ~10.500 obligation risultano "sopra soglia",
-   * ma la stragrande maggioranza sono posizioni chiuse o polvere, con valori
-   * aggregati rimasti congelati all'ultimo refresh. Senza questo filtro la lista
-   * di candidati è dominata da rumore.
+   * This matters: on the Main Market ~10,500 obligations read as "above
+   * threshold", but the vast majority are closed or dust positions whose
+   * aggregate values stayed frozen at their last refresh. Without this filter
+   * the candidate list is dominated by noise.
    */
   minDebtUsd?: number;
 };
@@ -124,7 +124,7 @@ export async function scanObligationHealth(
       ],
     })
     .send();
-  // senza `withContext` l'RPC restituisce direttamente l'array
+  // without `withContext` the RPC returns the array directly
   const accounts = res as unknown as { pubkey: Address; account: { data: [string, string] } }[];
 
   const rows: HealthRow[] = [];

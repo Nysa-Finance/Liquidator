@@ -19,9 +19,9 @@ import { computeUnitLimitIx, computeUnitPriceIx } from './computeBudget.js';
 export type Atas = { usdc: Address; usdy: Address; cusdy: Address };
 
 /**
- * Costruisce la transazione atomica completa.
+ * Builds the complete atomic transaction.
  *
- * Ordine (vedi docs/03-transazione-atomica.md):
+ * Order (see docs/02-design.md):
  *   0 setComputeUnitLimit
  *   1 setComputeUnitPrice
  *   2 refreshReserve(USDC)
@@ -32,9 +32,9 @@ export type Atas = { usdc: Address; usdy: Address; cusdy: Address };
  *   7 swapV2
  *   8 flashRepay
  *
- * `borrowInstructionIndex` è calcolato dall'array, mai hardcoded: basta aggiungere
- * o togliere una ComputeBudget in testa perché un indice fisso diventi sbagliato e
- * il programma risponda `InvalidFlashRepay`.
+ * `borrowInstructionIndex` is derived from the array, never hardcoded: adding or
+ * removing a single ComputeBudget instruction at the head is enough to make a
+ * fixed index wrong, and the program answers `InvalidFlashRepay`.
  */
 export function buildLiquidationMessage(args: {
   signer: KeyPairSigner;
@@ -60,7 +60,7 @@ export function buildLiquidationMessage(args: {
     }),
   ];
 
-  const borrowInstructionIndex = head.length; // ← calcolato, non costante
+  const borrowInstructionIndex = head.length; // ← derived, not a constant
 
   const { borrow, repay } = flashLoanPair({
     signer: args.signer,

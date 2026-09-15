@@ -15,7 +15,7 @@ import { TARGET_MARKET, USDC_RESERVE, USDY_RESERVE } from '../src/config.js';
 import { refreshReserveIx } from '../src/build/klend.js';
 import { loadWorld, setScopePrice, readScopePrice, type World } from './world.js';
 
-/** Indici Scope usati dalle reserve del market (letti da config.tokenInfo.scopeConfiguration). */
+/** Scope indices used by the market's reserves (read from config.tokenInfo.scopeConfiguration). */
 const USDY_SCOPE_INDEX = 3;
 const USDC_SCOPE_INDEX = 20;
 const USDC_SCOPE_INDEX_2 = 230;
@@ -34,32 +34,32 @@ async function sendIxs(world: World, signer: Awaited<ReturnType<typeof generateK
 
 function readReservePrice(world: World, reserve: Parameters<typeof world.svm.getAccount>[0]): number {
   const acc = world.svm.getAccount(reserve);
-  assert.ok(acc && 'data' in acc && acc.data, 'reserve assente nel mondo');
+  assert.ok(acc && 'data' in acc && acc.data, 'reserve missing from the world');
   const r = Reserve.decode(Buffer.from(acc.data as Uint8Array));
   return Number(r.liquidity.marketPriceSf) / 2 ** 60;
 }
 
-test('il mondo locale carica programmi e stato di mainnet', async () => {
+test('the local world loads mainnet programs and state', async () => {
   const world = await loadWorld();
   assert.equal(Object.keys(world.manifest.programs).length, 3);
   const acc = world.svm.getAccount(USDY_RESERVE.address);
-  assert.ok(acc && 'data' in acc, 'reserve USDY non caricata');
+  assert.ok(acc && 'data' in acc, 'USDY reserve not loaded');
 });
 
-test('il feed Scope del market quota USDY a ~1e-6: la reserve è configurata su un indice segnaposto', async () => {
+test('the market Scope feed prices USDY at ~1e-6: the reserve points at a placeholder index', async () => {
   const world = await loadWorld();
   const p = readScopePrice(world, TARGET_MARKET.scopePrices, USDY_SCOPE_INDEX);
-  // Questo NON è un bug del bot: è lo stato reale di mainnet.
-  // La scope chain della reserve USDY è [3], e l'indice 3 vale 1e-6 USD.
-  assert.ok(p.price < 0.01, `atteso prezzo segnaposto, letto ${p.price}`);
+  // This is NOT a bot bug: it is the real state of mainnet.
+  // The USDY reserve's scope chain is [3], and index 3 holds 1e-6 USD.
+  assert.ok(p.price < 0.01, `expected a placeholder price, read ${p.price}`);
 });
 
-test('refreshReserve applica i prezzi Scope che scriviamo noi', async () => {
+test('refreshReserve applies the Scope prices we write ourselves', async () => {
   const world = await loadWorld({ sigverify: false });
   const signer = await generateKeyPairSigner();
   world.svm.airdrop(signer.address, 10_000_000_000n as never);
 
-  // Prezzi realistici, timbrati allo slot/timestamp correnti del mondo.
+  // Realistic prices, stamped with the world's current slot/timestamp.
   setScopePrice(world, TARGET_MARKET.scopePrices, USDY_SCOPE_INDEX, 1.1435);
   setScopePrice(world, TARGET_MARKET.scopePrices, USDC_SCOPE_INDEX, 1.0);
   setScopePrice(world, TARGET_MARKET.scopePrices, USDC_SCOPE_INDEX_2, 1.0);
@@ -70,7 +70,7 @@ test('refreshReserve applica i prezzi Scope che scriviamo noi', async () => {
   ]);
 
   if (res instanceof FailedTransactionMetadata) {
-    assert.fail(`refreshReserve fallita: ${res.err().toString()}\n${res.meta().logs().slice(-10).join('\n')}`);
+    assert.fail(`refreshReserve failed: ${res.err().toString()}\n${res.meta().logs().slice(-10).join('\n')}`);
   }
 
   assert.ok(Math.abs(readReservePrice(world, USDY_RESERVE.address) - 1.1435) < 1e-4);

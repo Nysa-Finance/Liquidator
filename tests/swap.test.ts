@@ -22,9 +22,9 @@ import { computeUnitLimitIx } from '../src/build/computeBudget.js';
 import { forgeTokenAccount, loadWorld, readTokenAmount, type World } from './world.js';
 
 /**
- * Esegue davvero lo swap USDY → USDC contro il pool reale di mainnet, in locale.
- * Verifica anche che il quote off-chain coincida con l'esecuzione on-chain:
- * se divergessero, tutte le stime di profitto sarebbero sbagliate.
+ * Actually executes the USDY → USDC swap against the real mainnet pool, locally.
+ * It also checks that the off-chain quote matches on-chain execution: if the two
+ * diverged, every profit estimate would be wrong.
  */
 
 function accountData(world: World, addr: Parameters<typeof world.svm.getAccount>[0]): Uint8Array | null {
@@ -34,16 +34,16 @@ function accountData(world: World, addr: Parameters<typeof world.svm.getAccount>
   return d.length === 0 ? null : d;
 }
 
-test('swapV2 USDY→USDC: esecuzione reale e quote coerente', async () => {
+test('swapV2 USDY→USDC: real execution, and the quote agrees', async () => {
   const world = await loadWorld({ sigverify: false });
   const signer = await generateKeyPairSigner();
   world.svm.airdrop(signer.address, 10_000_000_000n as never);
 
   const poolData = accountData(world, ORCA_POOL.address);
-  assert.ok(poolData, 'pool Orca assente nelle fixture');
+  assert.ok(poolData, 'Orca pool missing from the fixtures');
   const pool = decodeWhirlpoolData(poolData);
 
-  // il contesto ricostruisce da solo gli indirizzi dei tick array dalla direzione dello swap
+  // the context derives the tick array addresses itself from the swap direction
   const probe = await orcaContextFromAccounts({ pool, tickArrayData: [null, null, null], slot: world.slot });
   const ctx = await orcaContextFromAccounts({
     pool,
@@ -53,7 +53,7 @@ test('swapV2 USDY→USDC: esecuzione reale e quote coerente', async () => {
 
   const usdyAcct = (await generateKeyPairSigner()).address;
   const usdcAcct = (await generateKeyPairSigner()).address;
-  const amountIn = 1_000_000_000n; // 1.000 USDY
+  const amountIn = 1_000_000_000n; // 1,000 USDY
   forgeTokenAccount(world, usdyAcct, ORCA_POOL.tokenMintA, signer.address, amountIn);
   forgeTokenAccount(world, usdcAcct, ORCA_POOL.tokenMintB, signer.address, 0n);
 
@@ -84,20 +84,20 @@ test('swapV2 USDY→USDC: esecuzione reale e quote coerente', async () => {
   const res = world.svm.sendTransaction((await signTransactionMessageWithSigners(msg)) as never);
 
   if (res instanceof FailedTransactionMetadata) {
-    assert.fail(`swap fallito: ${res.err().toString()}\n${res.meta().logs().slice(-12).join('\n')}`);
+    assert.fail(`swap failed: ${res.err().toString()}\n${res.meta().logs().slice(-12).join('\n')}`);
   }
 
   const got = readTokenAmount(world, usdcAcct);
-  assert.equal(readTokenAmount(world, usdyAcct), 0n, 'gli USDY dovevano essere tutti venduti');
-  assert.ok(got >= quote.tokenMinOut, `output ${got} sotto il minimo ${quote.tokenMinOut}`);
+  assert.equal(readTokenAmount(world, usdyAcct), 0n, 'all USDY should have been sold');
+  assert.ok(got >= quote.tokenMinOut, `output ${got} below the minimum ${quote.tokenMinOut}`);
 
-  // il quote off-chain deve coincidere con l'esecuzione: tolleranza 1 bps
+  // the off-chain quote must match execution: 1 bps tolerance
   const drift = Number(got - quote.tokenEstOut) / Number(quote.tokenEstOut);
-  assert.ok(Math.abs(drift) < 1e-4, `quote e esecuzione divergono di ${(drift * 1e4).toFixed(2)} bps`);
+  assert.ok(Math.abs(drift) < 1e-4, `quote and execution diverge by ${(drift * 1e4).toFixed(2)} bps`);
 
   console.log(
-    `    swap eseguito: ${Number(amountIn) / 1e6} USDY → ${Number(got) / 1e6} USDC ` +
-      `(quote ${Number(quote.tokenEstOut) / 1e6}, scarto ${(drift * 1e4).toFixed(3)} bps, ` +
+    `    swap executed: ${Number(amountIn) / 1e6} USDY → ${Number(got) / 1e6} USDC ` +
+      `(quote ${Number(quote.tokenEstOut) / 1e6}, drift ${(drift * 1e4).toFixed(3)} bps, ` +
       `CU ${res.computeUnitsConsumed()})`,
   );
 });

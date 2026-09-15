@@ -6,16 +6,16 @@ import type { Eligibility } from './eligibility.js';
 import { quoteUsdyToUsdc, spotPrice, type OrcaContext } from './build/orca.js';
 
 /**
- * Motore di profittabilità — vedi docs/04-profittabilita.md.
+ * Profitability engine — see docs/03-profitability.md.
  *
  * Π ≈ R · [ (1+b)·ρ·(1−s)·(1−f_orca) − (1+φ) ] − c_base − c_prio
  *
- * dove ρ = prezzo Orca / prezzo Scope. ρ è il vero fattore di rischio: un
- * disallineamento dell'1,8 % azzera un bonus del 2 %.
+ * where ρ = Orca price / Scope price. ρ is the real risk factor: a 1.8%
+ * mismatch wipes out a 2% bonus.
  */
 
 export type PlanReject =
-  | 'no-collateral-liquidity'        // riceveresti cUSDY invece di USDY
+  | 'no-collateral-liquidity'        // you would receive cUSDY instead of USDY
   | 'insufficient-flash-liquidity'
   | 'oracle-divergence'
   | 'below-min-profit'
@@ -25,11 +25,11 @@ export type PlanReject =
 export type LiquidationPlan = {
   obligation: Address;
   slot: bigint;
-  /** USDC ripagati, base units */
+  /** USDC repaid, base units */
   repayAmount: bigint;
-  /** guardia on-chain sulla ix di liquidazione */
+  /** on-chain guard on the liquidation instruction */
   minReceivedUsdy: bigint;
-  /** guardia on-chain sullo swap Orca */
+  /** on-chain guard on the Orca swap */
   minUsdcOut: bigint;
   expectedUsdyOut: bigint;
   expectedUsdcOut: bigint;
@@ -52,7 +52,7 @@ export function buildPlan(args: {
   orca: OrcaContext;
   slot: bigint;
   nowSeconds: bigint;
-  /** stima costi fissi in USDC (base fee + priority fee convertite) */
+  /** fixed-cost estimate in USDC (base fee + priority fee, converted) */
   fixedCostUsdc: Decimal;
 }): PlanResult {
   const { obligation, debtReserve, collReserve, eligibility, orca } = args;
@@ -65,7 +65,7 @@ export function buildPlan(args: {
   const pxColl = collReserve.getOracleMarketPrice();   // USDY/USD, ~1,14
   if (pxDebt.lte(0) || pxColl.lte(0)) return { ok: false, reason: 'oracle-divergence' };
 
-  // ── 1. quanto posso ripagare ──────────────────────────────────────────
+  // ── 1. how much can be repaid ─────────────────────────────────────────
   const debtLamports = borrow.amount; // base units USDC
   const maxByCloseFactor = debtLamports.mul(eligibility.closeFactor);
   const maxByMarketCap = new Decimal(
@@ -75,12 +75,12 @@ export function buildPlan(args: {
   let repay = Decimal.min(maxByCloseFactor, maxByMarketCap).floor();
   if (repay.lte(0)) return { ok: false, reason: 'dust' };
 
-  // ── 2. collaterale che ricevo ─────────────────────────────────────────
+  // ── 2. collateral received ────────────────────────────────────────────
   const bonusMul = eligibility.bonusRate.add(1);
   const seizedValueUsd = repay.div(10 ** USDC_RESERVE.decimals).mul(pxDebt).mul(bonusMul);
   let usdyGross = seizedValueUsd.div(pxColl).mul(10 ** USDY_RESERVE.decimals).floor();
 
-  // cap sul collaterale effettivamente depositato
+  // cap at the collateral actually deposited
   const depositLamports = deposit.amount;
   if (usdyGross.gt(depositLamports)) {
     usdyGross = depositLamports;
@@ -89,13 +89,13 @@ export function buildPlan(args: {
       .div(bonusMul).div(pxDebt).mul(10 ** USDC_RESERVE.decimals).floor();
   }
 
-  // ── 3. la reserve USDY ha abbastanza liquidità per REDIMERE? ──────────
-  // Se no, la ix riesce ma ti consegna cUSDY, non USDY: lo swap poi fallisce
-  // e l'intera transazione fa revert. Vedi docs/00-VERDETTO.md §4.
+  // ── 3. does the USDY reserve hold enough liquidity to REDEEM? ─────────
+  // If not, the instruction succeeds but hands you cUSDY rather than USDY: the
+  // swap then fails and the whole transaction reverts. See docs/01-protocol.md.
   const availableUsdy = collReserve.getLiquidityAvailableAmount();
   if (usdyGross.gt(availableUsdy)) return { ok: false, reason: 'no-collateral-liquidity' };
 
-  // protocol_liquidation_fee = max(ceil(bonus_part * pct), 1) → minimo 1 lamport
+  // protocol_liquidation_fee = max(ceil(bonus_part * pct), 1) → at least 1 lamport
   const bonusPart = usdyGross.minus(usdyGross.div(bonusMul));
   const protoFee = Decimal.max(
     bonusPart.mul(collReserve.state.config.protocolLiquidationFeePct).div(100).ceil(),
@@ -104,18 +104,18 @@ export function buildPlan(args: {
   const usdyNet = usdyGross.minus(protoFee);
   if (usdyNet.lte(0)) return { ok: false, reason: 'dust' };
 
-  // ── 4. liquidità disponibile per il flash loan ────────────────────────
-  // (il controllo definitivo lo fa la simulazione; qui evitiamo tx sicuramente perse)
+  // ── 4. liquidity available for the flash loan ─────────────────────────
+  // (simulation is the final word; this only avoids certainly-doomed txs)
   const flashReserve = args.market.getReserveByAddress(FLASH_SOURCE.reserve);
   if (flashReserve && repay.gt(flashReserve.getLiquidityAvailableAmount())) {
     return { ok: false, reason: 'insufficient-flash-liquidity' };
   }
 
-  // ── 5. quote Orca ─────────────────────────────────────────────────────
+  // ── 5. Orca quote ─────────────────────────────────────────────────────
   const usdyIn = BigInt(usdyNet.toFixed(0));
   const quote = quoteUsdyToUsdc(orca, usdyIn, CFG.swapSlippageBps, args.nowSeconds);
 
-  // ρ = prezzo di mercato Orca / prezzo oracolo Scope (entrambi USDY in USDC)
+  // ρ = Orca market price / Scope oracle price (both USDY denominated in USDC)
   const orcaSpot = new Decimal(spotPrice(orca.pool));
   const scopeUsdyInUsdc = pxColl.div(pxDebt);
   const rho = orcaSpot.div(scopeUsdyInUsdc);
@@ -123,7 +123,7 @@ export function buildPlan(args: {
     return { ok: false, reason: 'oracle-divergence' };
   }
 
-  // ── 6. profitto ───────────────────────────────────────────────────────
+  // ── 6. profit ─────────────────────────────────────────────────────────
   const flashFee = repay.mul(FLASH_SOURCE.flashLoanFeeRate).ceil();
   const usdcOut = new Decimal(quote.tokenEstOut.toString());
   const usdcOutWorst = new Decimal(quote.tokenMinOut.toString());
@@ -136,7 +136,7 @@ export function buildPlan(args: {
   const marginBps = expectedProfit.div(toUsdc(repay)).mul(BPS);
   if (marginBps.lt(CFG.minMarginBps)) return { ok: false, reason: 'below-min-margin' };
 
-  // ── 7. guardie on-chain ───────────────────────────────────────────────
+  // ── 7. on-chain guards ────────────────────────────────────────────────
   const minReceivedUsdy = BigInt(
     usdyNet.mul(BPS.minus(CFG.liqSlippageBps)).div(BPS).floor().toFixed(0),
   );

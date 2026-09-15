@@ -42,7 +42,8 @@ async function tick(ctx: {
   guard: InFlightGuard;
 }): Promise<void> {
   const rpc = ctx.pool.active();
-  // slot e blockTime letti allo stesso commitment: uno snapshot coerente, non due letture scollegate
+  // slot and blockTime read at the same commitment: one coherent snapshot,
+  // not two disconnected reads
   const instant = await getCurrentLedgerInstant(rpc, 'processed');
   const slot = instant.slot;
   const nowSeconds = BigInt(instant.blockTime);
@@ -52,7 +53,7 @@ async function tick(ctx: {
   const debtReserve = ctx.market.getReserveByAddress(USDC_RESERVE.address);
   const collReserve = ctx.market.getReserveByAddress(USDY_RESERVE.address);
   if (!debtReserve || !collReserve) {
-    log.error('reserve non trovate nel market — configurazione errata');
+    log.error('reserves not found in the market — misconfiguration');
     return;
   }
 
@@ -68,7 +69,7 @@ async function tick(ctx: {
 
     const elig = evaluate(ctx.market, ob, debtReserve, collReserve);
     if (!elig.ok) {
-      log.trace({ obligation: key, reason: elig.reason }, 'non liquidabile');
+      log.trace({ obligation: key, reason: elig.reason }, 'not liquidatable');
       continue;
     }
 
@@ -84,13 +85,13 @@ async function tick(ctx: {
       fixedCostUsdc: new Decimal(0.01),
     });
     if (!planRes.ok) {
-      log.debug({ obligation: key, reason: planRes.reason }, 'piano scartato');
+      log.debug({ obligation: key, reason: planRes.reason }, 'plan rejected');
       continue;
     }
     const plan = planRes.plan;
 
     if (!ctx.guard.tryAcquire(key)) {
-      log.debug({ obligation: key }, 'già in volo, salto');
+      log.debug({ obligation: key }, 'already in flight, skipping');
       continue;
     }
 
@@ -120,7 +121,7 @@ async function tick(ctx: {
       if (!sim.ok) {
         log.warn(
           { obligation: key, err: sim.err, logs: sim.logs.slice(-8) },
-          'simulazione fallita — non invio',
+          'simulation failed — not submitting',
         );
         continue;
       }
@@ -132,7 +133,7 @@ async function tick(ctx: {
       if (simProfitUsdc !== null && simProfitUsdc.lt(CFG.minProfitUsdc)) {
         log.warn(
           { obligation: key, simProfitUsdc: simProfitUsdc.toString() },
-          'profitto simulato sotto soglia — non invio',
+          'simulated profit below threshold — not submitting',
         );
         continue;
       }
@@ -144,18 +145,18 @@ async function tick(ctx: {
           bonusBps: plan.bonusRate.mul(10_000).toFixed(0),
           rho: plan.oracleRatio.toFixed(6),
           expectedProfit: plan.expectedProfitUsdc.toFixed(6),
-          simProfit: simProfitUsdc?.toFixed(6) ?? 'n/d',
+          simProfit: simProfitUsdc?.toFixed(6) ?? 'n/a',
           cu: sim.unitsConsumed,
         },
-        'piano valido',
+        'plan accepted',
       );
 
       if (CFG.dryRun) {
-        log.info('DRY_RUN attivo: nessun invio');
+        log.info('DRY_RUN enabled: nothing submitted');
         continue;
       }
 
-      // ricostruzione con CU misurate e priority fee decisa
+      // rebuild with measured CU and the chosen priority fee
       const cuLimit = Math.ceil(sim.unitsConsumed * 1.15);
       const priorityPrice = await ctx.fees.suggest(
         rpc,
@@ -182,14 +183,14 @@ async function tick(ctx: {
       const res = await sendAndConfirm(ctx.pool, finalWire, bh2.lastValidBlockHeight);
       if (res.landed && res.err === null) {
         ctx.fees.onSuccess();
-        log.info({ signature: res.signature }, 'liquidazione confermata');
+        log.info({ signature: res.signature }, 'liquidation confirmed');
       } else {
         ctx.fees.onRaceLost();
-        log.warn({ signature: res.signature, err: res.err }, 'liquidazione non atterrata');
+        log.warn({ signature: res.signature, err: res.err }, 'liquidation did not land');
       }
     } catch (e) {
       ctx.pool.reportFailure(e);
-      log.error({ obligation: key, err: String(e) }, 'errore in esecuzione');
+      log.error({ obligation: key, err: String(e) }, 'execution error');
     } finally {
       ctx.guard.release(key);
     }
@@ -209,7 +210,7 @@ async function main(): Promise<void> {
     KLEND_PROGRAM,
     true,
   );
-  if (!market) throw new Error(`Market ${TARGET_MARKET.address} non caricato`);
+  if (!market) throw new Error(`Market ${TARGET_MARKET.address} failed to load`);
 
   log.info(
     {
@@ -219,9 +220,9 @@ async function main(): Promise<void> {
       dryRun: CFG.dryRun,
       atas,
     },
-    'avvio bot',
+    'bot starting',
   );
-  if (!CFG.dryRun) log.warn('DRY_RUN DISATTIVO: verranno inviate transazioni reali');
+  if (!CFG.dryRun) log.warn('DRY_RUN IS OFF: real transactions will be submitted');
 
   const ctx = {
     pool,
@@ -239,14 +240,14 @@ async function main(): Promise<void> {
       pool.reportSuccess();
     } catch (e) {
       pool.reportFailure(e);
-      log.error({ err: String(e) }, 'errore nel ciclo');
+      log.error({ err: String(e) }, 'loop error');
     }
     await new Promise((r) => setTimeout(r, CFG.scanIntervalMs));
   }
 }
 
 void main().catch((e) => {
-  log.fatal({ err: String(e) }, 'uscita');
+  log.fatal({ err: String(e) }, 'exiting');
   process.exit(1);
 });
 

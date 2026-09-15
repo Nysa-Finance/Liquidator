@@ -1,7 +1,7 @@
 {
   "name": "kamino-usdy-liquidator",
   "version": "0.1.0",
-  "description": "Bot di liquidazione Kamino Lend (USDY collaterale / USDC debito) con flash loan atomico e uscita su Orca Whirlpool",
+  "description": "Kamino Lend liquidation bot: USDY collateral, USDC debt, atomic flash loan, Orca Whirlpool exit",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

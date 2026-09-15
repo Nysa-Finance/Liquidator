@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Scarica da mainnet tutto ciò che serve a ricostruire il mondo in locale:
- * i programmi (.so estratti dal programdata) e gli account di stato.
+ * Downloads from mainnet everything needed to rebuild the world locally: the
+ * programs (.so extracted from programdata) and the state accounts.
  *
  * Output:
- *   fixtures/programs/<name>.so          → LiteSVM addProgramFromFile / solana-test-validator --bpf-program
- *   fixtures/accounts/<pubkey>.json      → formato CLI di Solana, usabile anche con
- *                                          solana-test-validator --account <pk> <file>
- *   fixtures/manifest.json               → indice con slot e provenienza
+ *   fixtures/programs/<name>.so     → LiteSVM addProgram / solana-test-validator --bpf-program
+ *   fixtures/accounts/<pubkey>.json → Solana CLI format, also usable with
+ *                                     solana-test-validator --account <pk> <file>
+ *   fixtures/manifest.json          → index with slot and provenance
  *
  *   RPC=https://... node scripts/dump-fixtures.mjs
  */
@@ -52,7 +52,7 @@ const getAccounts = async (keys) => {
   return out;
 };
 
-/** Il .so vive nell'account programdata; l'header UpgradeableLoaderState è 45 byte. */
+/** The .so lives in the programdata account; the UpgradeableLoaderState header is 45 bytes. */
 async function dumpProgram(name, programId) {
   const prog = await rpc('getAccountInfo', [programId, { encoding: 'base64' }]);
   const data = Buffer.from(prog.value.data[0], 'base64');
@@ -60,12 +60,12 @@ async function dumpProgram(name, programId) {
   const programDataAddress = await rpc('getAccountInfo', [programId, { encoding: 'jsonParsed' }])
     .then((r) => r.value.data?.parsed?.info?.programData)
     .catch(() => null);
-  if (!programDataAddress) throw new Error(`${name}: programData non risolto (loader non upgradeable?)`);
+  if (!programDataAddress) throw new Error(`${name}: programData not resolved (non-upgradeable loader?)`);
   const pd = await rpc('getAccountInfo', [programDataAddress, { encoding: 'base64' }]);
-  // Il programdata è allocato alla dimensione massima e riempito di zeri in coda.
-  // Tagliare "fino all'ultimo byte non nullo" rompe l'ELF: la tabella delle section
-  // header sta in fondo e può terminare con zeri legittimi. Si calcola la lunghezza
-  // vera dall'header ELF64.
+  // programdata is allocated at maximum size and zero-padded at the tail.
+  // Trimming "to the last non-zero byte" corrupts the ELF: the section header
+  // table sits at the end and may legitimately end in zeros. Compute the real
+  // length from the ELF64 header instead.
   const raw = Buffer.from(pd.value.data[0], 'base64').subarray(45);
   if (raw.subarray(0, 4).toString('hex') !== '7f454c46') {
     throw new Error(`${name}: i primi byte non sono un ELF (\\x7fELF)`);
@@ -78,7 +78,7 @@ async function dumpProgram(name, programId) {
   const SHT_NOBITS = 8;
   for (let i = 0; i < shnum; i++) {
     const o = shoff + i * shentsize;
-    if (raw.readUInt32LE(o + 4) === SHT_NOBITS) continue; // .bss non occupa spazio su file
+    if (raw.readUInt32LE(o + 4) === SHT_NOBITS) continue; // .bss takes no file space
     end = Math.max(end, Number(raw.readBigUInt64LE(o + 0x18)) + Number(raw.readBigUInt64LE(o + 0x20)));
   }
   if (end > raw.length) throw new Error(`${name}: ELF troncato (${end} > ${raw.length})`);
@@ -98,10 +98,10 @@ async function main() {
 
   for (const [name, id] of Object.entries(PROGRAMS)) {
     manifest.programs[name] = await dumpProgram(name, id);
-    console.log(`programma ${name.padEnd(10)} ${manifest.programs[name].bytes} byte`);
+    console.log(`program ${name.padEnd(10)} ${manifest.programs[name].bytes} bytes`);
   }
 
-  // ── account di stato, derivati dalle reserve invece che cablati ───────────
+  // ── state accounts, derived from the reserves instead of hardcoded ────────
   const keys = new Set([TARGET_MARKET, FLASH_MARKET, ORCA_POOL]);
 
   const found = await rpc('getProgramAccounts', [
@@ -125,13 +125,13 @@ async function main() {
     ]) keys.add(String(k));
   }
 
-  // market authority PDA non serve (è solo un signer PDA, nessun dato)
+  // the market authority PDA is not needed (a signer PDA with no data)
   for (const m of [TARGET_MARKET, FLASH_MARKET]) {
     const [, acc] = (await getAccounts([m]))[0];
-    if (acc) LendingMarket.decode(Buffer.from(acc.data[0], 'base64')); // validazione
+    if (acc) LendingMarket.decode(Buffer.from(acc.data[0], 'base64')); // validation
   }
 
-  // ── pool Orca: vault + tick array + oracle ────────────────────────────────
+  // ── Orca pool: vaults + tick arrays + oracle ──────────────────────────────
   const { WHIRLPOOL_PROGRAM_ADDRESS, decodeWhirlpool, getTickArrayAddress, getOracleAddress } =
     await import('@orca-so/whirlpools-client');
   const [, poolAcc] = (await getAccounts([ORCA_POOL]))[0];
@@ -149,7 +149,7 @@ async function main() {
   keys.add(String(pool.tokenMintB));
   const span = pool.tickSpacing * 88;
   const start = Math.floor(pool.tickCurrentIndex / span) * span;
-  // prendiamo un intervallo ampio: lo swap può attraversare più array del previsto
+  // take a wide range: a swap can cross more arrays than expected
   for (let i = -4; i <= 2; i++) {
     const [ta] = await getTickArrayAddress(ORCA_POOL, start + i * span);
     keys.add(String(ta));
@@ -157,7 +157,7 @@ async function main() {
   const [oracle] = await getOracleAddress(ORCA_POOL);
   keys.add(String(oracle));
 
-  // ── scrittura ─────────────────────────────────────────────────────────────
+  // ── write ─────────────────────────────────────────────────────────────────
   let written = 0, missing = 0;
   for (const [pk, acc] of await getAccounts([...keys])) {
     if (!acc) { missing += 1; manifest.accounts.push({ pubkey: pk, exists: false }); continue; }
@@ -179,8 +179,8 @@ async function main() {
 
   await writeFile(`${OUT}manifest.json`, JSON.stringify(manifest, null, 2));
   console.log(`\nslot ${slot}  blockTime ${blockTime}`);
-  console.log(`account scritti: ${written}, inesistenti (normale per oracle/tick array non init): ${missing}`);
-  console.log(`chiamate RPC: ${calls}`);
+  console.log(`accounts written: ${written}, missing (normal for uninitialized oracle/tick arrays): ${missing}`);
+  console.log(`RPC calls: ${calls}`);
   console.log(`fixtures in ${OUT}`);
 }
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Legge e stampa lo stato reale del market bersaglio.
- * Nessuna chiave richiesta, solo lettura. Serve a verificare che i valori
- * hardcoded in src/config.ts siano ancora quelli on-chain.
+ * Reads and prints the real state of the target market.
+ * Read-only, no key required. Use it to check that the values hardcoded in
+ * src/config.ts still match what is on-chain.
  *
  *   RPC=https://... node scripts/inspect-market.mjs
  */
@@ -11,7 +11,7 @@ import { Reserve, LendingMarket } from '@kamino-finance/klend-sdk';
 const RPC = process.env.RPC ?? process.env.RPC_PRIMARY ?? 'https://api.mainnet-beta.solana.com';
 const KLEND = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD';
 const MARKET = process.env.MARKET ?? 'F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy';
-const OBLIGATION_ACCOUNT_SIZE = 3344; // OBLIGATION_SIZE (3336) + 8 di discriminante
+const OBLIGATION_ACCOUNT_SIZE = 3344; // OBLIGATION_SIZE (3336) + 8 discriminator bytes
 const RESERVE_ACCOUNT_SIZE = 8624;    // RESERVE_SIZE (8616) + 8
 
 const rpc = async (method, params) => {
@@ -77,7 +77,7 @@ for (const { pubkey } of found) {
     badDebtLiqBonusBps: c.badDebtLiquidationBonusBps,
     protocolLiqFeePct: c.protocolLiquidationFeePct,
     borrowFactorPct: s(c.borrowFactorPct),
-    // u64::MAX ⇒ flash loan DISABILITATI; altrimenti rate = valore / 2^60
+    // u64::MAX ⇒ flash loans DISABLED; otherwise rate = value / 2^60
     flashLoanFeeSf: s(c.fees.flashLoanFeeSf),
     flashLoanFeeRate: Number(c.fees.flashLoanFeeSf) / 2 ** 60,
     depositLimit: s(c.depositLimit),
@@ -100,5 +100,5 @@ const obs = await rpc('getProgramAccounts', [
     filters: [{ dataSize: OBLIGATION_ACCOUNT_SIZE }, { memcmp: { offset: 32, bytes: MARKET } }],
   },
 ]);
-console.log(`\nOBLIGATION nel market: ${obs.length}`);
+console.log(`\nOBLIGATIONS in the market: ${obs.length}`);
 for (const { pubkey } of obs.slice(0, 20)) console.log('  ', pubkey);

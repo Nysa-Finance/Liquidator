@@ -3,10 +3,11 @@ import type { KaminoMarket, KaminoObligation, KaminoReserve } from '@kamino-fina
 import type { Address } from '@solana/kit';
 
 /**
- * Replica off-chain di `state/liquidation_operations.rs`.
+ * Off-chain replica of `state/liquidation_operations.rs`.
  *
- * Serve SOLO a scartare in fretta i candidati non liquidabili e a stimare il bonus.
- * La verità resta on-chain: ogni piano va poi passato per `simulateTransaction`.
+ * Its ONLY job is to discard non-liquidatable candidates quickly and estimate
+ * the bonus. The truth stays on-chain: every plan then goes through
+ * `simulateTransaction`.
  */
 
 export type EligibilityReject =
@@ -22,9 +23,9 @@ export type Eligibility =
   | { ok: false; reason: EligibilityReject }
   | {
       ok: true;
-      /** rate, non bps: 0.02 = 2 % */
+      /** rate, not bps: 0.02 = 2% */
       bonusRate: Decimal;
-      /** frazione del debito ripagabile in questo colpo (close factor effettivo) */
+      /** fraction of the debt repayable in one shot (effective close factor) */
       closeFactor: Decimal;
       ltv: Decimal;
       liquidationLtv: Decimal;
@@ -32,11 +33,11 @@ export type Eligibility =
     };
 
 /**
- * `calculate_liquidation_bonus` (klend, verificato su sorgente).
+ * `calculate_liquidation_bonus` (klend, verified against source).
  *
- *   se noBfLtv >= 0.99 → ramo bad debt
- *   altrimenti          → max(minReserveBonus, ltv - maxAllowedLtv), cappato a
- *                         maxReserveBonus e a (1 - noBfLtv)
+ *   if noBfLtv >= 0.99 → bad-debt branch
+ *   otherwise          → max(minReserveBonus, ltv - maxAllowedLtv), capped at
+ *                        maxReserveBonus and at (1 - noBfLtv)
  */
 export function calculateLiquidationBonus(args: {
   collMinBps: number;
@@ -45,7 +46,7 @@ export function calculateLiquidationBonus(args: {
   debtMinBps: number;
   debtMaxBps: number;
   debtBadDebtBps: number;
-  /** cap e-mode; passare 65535 (u16::MAX) se nessun elevation group */
+  /** e-mode cap; pass 65535 (u16::MAX) when there is no elevation group */
   emodeMaxBonusBps: number;
   ltv: Decimal;
   maxAllowedLtv: Decimal;
@@ -94,9 +95,10 @@ export function evaluate(
 
   if (ltv.lt(liqLtv)) return { ok: false, reason: 'healthy' };
 
-  // Regole di priorità del programma — se violate la ix fa revert.
-  // `highest_borrow_factor_pct` / `lowest_reserve_deposit_liquidation_ltv` sono
-  // mantenuti dal programma sull'obligation; li ricalcoliamo dalle posizioni.
+  // Program priority rules — violating them makes the instruction revert.
+  // `highest_borrow_factor_pct` / `lowest_reserve_deposit_liquidation_ltv` are
+  // maintained by the program on the obligation; we recompute them from the
+  // positions.
   let highestBorrowFactorPct = 0;
   for (const r of obligation.getBorrowReserves()) {
     const res = market.getReserveByAddress(r);
@@ -128,7 +130,7 @@ export function evaluate(
     noBfLtv,
   });
 
-  // `max_liquidatable_borrowed_amount`: close factor 100 % sopra la soglia di insolvenza
+  // `max_liquidatable_borrowed_amount`: close factor is 100% above the insolvency threshold
   const closeFactor = ltv.gt(new Decimal(m.insolvencyRiskUnhealthyLtvPct).div(100))
     ? new Decimal(1)
     : new Decimal(m.liquidationMaxDebtCloseFactorPct).div(100);

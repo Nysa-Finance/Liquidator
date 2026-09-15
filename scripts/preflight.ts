@@ -1,9 +1,9 @@
 /**
- * Verifica di prontezza prima del passaggio in produzione.
+ * Readiness check before going to production.
  *
- * SOLA LETTURA: usa il client con whitelist, non può firmare né inviare nulla.
- * Controlla, una per una, tutte le condizioni che devono essere vere perché il
- * bot possa funzionare sul market bersaglio, e dice quali mancano.
+ * READ-ONLY: it uses the allowlisted client, so it can neither sign nor submit.
+ * It walks every condition that must hold for the bot to work on the target
+ * market and reports which ones are missing.
  *
  *   npm run preflight
  *   RPC=https://... WALLET=<pubkey> npm run preflight
@@ -47,7 +47,7 @@ async function walletAddress(): Promise<Address | null> {
   try {
     const bytes = Uint8Array.from(JSON.parse(await readFile(path, 'utf8')) as number[]);
     const signer = await createKeyPairSignerFromBytes(bytes);
-    return signer.address; // solo la parte pubblica, la privata non lascia questa funzione
+    return signer.address; // public half only; the private key never leaves this function
   } catch {
     return null;
   }
@@ -58,66 +58,66 @@ async function main() {
   const now = Math.floor(Date.now() / 1000);
   console.log(`preflight — slot ${slot} — ${RPC.replace(/api-key=.*/, 'api-key=***')}\n`);
 
-  // ── 1. il market è aperto e liquidabile ──────────────────────────────────
+  // ── 1. the market is open and liquidatable ───────────────────────────────
   const mBuf = await data(TARGET_MARKET.address);
   if (!mBuf) {
-    add(false, true, 'market esistente', `${TARGET_MARKET.address} non trovato`);
+    add(false, true, 'market exists', `${TARGET_MARKET.address} not found`);
   } else {
     const m = LendingMarket.decode(mBuf);
-    add(m.emergencyMode === 0, true, 'emergency mode spento', `emergencyMode=${m.emergencyMode}`);
+    add(m.emergencyMode === 0, true, 'emergency mode off', `emergencyMode=${m.emergencyMode}`);
     add(
       m.priceTriggeredLiquidationDisabled === 0,
       true,
-      'liquidazioni da prezzo abilitate',
+      'price-triggered liquidations enabled',
       `priceTriggeredLiquidationDisabled=${m.priceTriggeredLiquidationDisabled}`,
     );
     add(
       String(m.permissioningAuthority) === '11111111111111111111111111111111',
       true,
-      'market non permissionato',
+      'market is permissionless',
       `permissioningAuthority=${m.permissioningAuthority}`,
     );
     add(
       m.liquidationMaxDebtCloseFactorPct === TARGET_MARKET.liquidationMaxDebtCloseFactorPct,
       false,
-      'close factor invariato',
+      'close factor unchanged',
       `on-chain ${m.liquidationMaxDebtCloseFactorPct}%, in config ${TARGET_MARKET.liquidationMaxDebtCloseFactorPct}%`,
     );
   }
 
-  // ── 2. le reserve hanno senso economico ──────────────────────────────────
+  // ── 2. the reserves make economic sense ──────────────────────────────────
   const usdyBuf = await data(USDY_RESERVE.address);
   const usdcBuf = await data(USDC_RESERVE.address);
   if (!usdyBuf || !usdcBuf) {
-    add(false, true, 'reserve caricate', 'una delle due reserve non esiste');
+    add(false, true, 'reserves loaded', 'one of the two reserves does not exist');
   } else {
     const usdy = Reserve.decode(usdyBuf);
     const usdc = Reserve.decode(usdcBuf);
 
     const usdyAvail = Number(usdy.liquidity.totalAvailableAmount) / 1e6;
     const usdcAvail = Number(usdc.liquidity.totalAvailableAmount) / 1e6;
-    add(usdyAvail >= 100, true, 'liquidità USDY sufficiente a redimere', `${usdyAvail.toFixed(2)} USDY in cassa`);
-    add(usdcAvail >= 0, false, 'liquidità USDC nel market', `${usdcAvail.toFixed(2)} USDC in cassa`);
+    add(usdyAvail >= 100, true, 'USDY liquidity enough to redeem', `${usdyAvail.toFixed(2)} USDY in the vault`);
+    add(usdcAvail >= 0, false, 'USDC liquidity in the market', `${usdcAvail.toFixed(2)} USDC in the vault`);
 
     add(
       usdy.config.status === 0,
       true,
-      'reserve USDY attiva',
-      `status=${usdy.config.status} (0 = attiva)`,
+      'USDY reserve active',
+      `status=${usdy.config.status} (0 = active)`,
     );
     add(
       usdy.config.maxLiquidationBonusBps > 0,
       true,
-      'bonus di liquidazione non azzerato',
+      'liquidation bonus not zeroed',
       `${usdy.config.minLiquidationBonusBps}–${usdy.config.maxLiquidationBonusBps} bps`,
     );
 
-    // ── 3. l'oracolo dice un prezzo credibile per USDY ─────────────────────
+    // ── 3. the oracle reports a believable USDY price ──────────────────────
     const feed = String(usdy.config.tokenInfo.scopeConfiguration.priceFeed) as Address;
     const idx = usdy.config.tokenInfo.scopeConfiguration.priceChain[0] ?? 65535;
     const scopeBuf = await data(feed);
     if (!scopeBuf || idx === 65535) {
-      add(false, true, 'oracolo USDY configurato', `feed=${feed} chain[0]=${idx}`);
+      add(false, true, 'USDY oracle configured', `feed=${feed} chain[0]=${idx}`);
     } else {
       const o = 8 + 32 + idx * 56;
       const px = Number(scopeBuf.readBigUInt64LE(o)) / 10 ** Number(scopeBuf.readBigUInt64LE(o + 8));
@@ -125,19 +125,19 @@ async function main() {
       add(
         px > 0.5 && px < 5,
         true,
-        'prezzo USDY dall’oracolo credibile',
-        `indice Scope ${idx} → ${px} USD (atteso ~1,14)`,
+        'USDY oracle price believable',
+        `Scope index ${idx} → ${px} USD (expected ~1.14)`,
       );
       add(
         age < Number(usdy.config.tokenInfo.maxAgePriceSeconds),
         true,
-        'prezzo oracolo fresco',
-        `${age}s di età, limite ${usdy.config.tokenInfo.maxAgePriceSeconds}s`,
+        'oracle price is fresh',
+        `${age}s old, limit ${usdy.config.tokenInfo.maxAgePriceSeconds}s`,
       );
     }
   }
 
-  // ── 4. esistono posizioni da liquidare ───────────────────────────────────
+  // ── 4. there are positions to liquidate ──────────────────────────────────
   const obs = await rpc
     .getProgramAccounts(KLEND_PROGRAM, {
       encoding: 'base64',
@@ -149,7 +149,7 @@ async function main() {
     })
     .send();
   const nObs = (obs as unknown as unknown[]).length;
-  add(nObs > 0, true, 'il market ha posizioni aperte', `${nObs} obligation`);
+  add(nObs > 0, true, 'the market has open positions', `${nObs} obligations`);
 
   if (nObs > 0) {
     const rows = await scanObligationHealth(rpc, TARGET_MARKET.address, KLEND_PROGRAM, { minDebtUsd: 10 });
@@ -157,55 +157,55 @@ async function main() {
     add(
       rows.length > 0,
       false,
-      'posizioni con debito significativo',
-      `${rows.length} con debito ≥ $10, ${over.length} sopra soglia` +
-        (rows[0] ? ` (migliore: ${(rows[0].healthRatio * 100).toFixed(1)}% della soglia, $${sfToUsd(rows[0].debtValueSf).toFixed(0)})` : ''),
+      'positions with meaningful debt',
+      `${rows.length} with debt >= $10, ${over.length} above threshold` +
+        (rows[0] ? ` (best: ${(rows[0].healthRatio * 100).toFixed(1)}% of threshold, $${sfToUsd(rows[0].debtValueSf).toFixed(0)})` : ''),
     );
   }
 
-  // ── 5. la sorgente del flash loan è utilizzabile ─────────────────────────
+  // ── 5. the flash loan source is usable ───────────────────────────────────
   const flashBuf = await data(FLASH_SOURCE.reserve);
   if (!flashBuf) {
-    add(false, true, 'reserve del flash loan', `${FLASH_SOURCE.reserve} non trovata`);
+    add(false, true, 'flash loan reserve', `${FLASH_SOURCE.reserve} not found`);
   } else {
     const f = Reserve.decode(flashBuf);
     const feeSf = BigInt(f.config.fees.flashLoanFeeSf.toString());
     const avail = Number(f.liquidity.totalAvailableAmount) / 1e6;
-    add(feeSf !== 2n ** 64n - 1n, true, 'flash loan abilitati', `flashLoanFeeSf=${feeSf}`);
+    add(feeSf !== 2n ** 64n - 1n, true, 'flash loans enabled', `flashLoanFeeSf=${feeSf}`);
     add(
       Math.abs(Number(feeSf) / 2 ** 60 - FLASH_SOURCE.flashLoanFeeRate) < 1e-12,
       false,
-      'fee flash loan invariata',
+      'flash loan fee unchanged',
       `${((Number(feeSf) / 2 ** 60) * 100).toFixed(5)}%`,
     );
-    add(avail > 10_000, true, 'liquidità per il flash loan', `${avail.toFixed(0)} USDC disponibili`);
+    add(avail > 10_000, true, 'flash loan liquidity', `${avail.toFixed(0)} USDC available`);
   }
 
-  // ── 6. la via d'uscita su Orca esiste ed è sana ──────────────────────────
+  // ── 6. the Orca exit route exists and is healthy ─────────────────────────
   try {
     const ctx = await loadOrcaContext(rpc, slot);
     const spot = spotPrice(ctx.pool);
-    add(ctx.pool.liquidity > 0n, true, 'pool Orca con liquidità in range', `L=${ctx.pool.liquidity}`);
-    add(spot > 0.5 && spot < 5, true, 'prezzo Orca credibile', `${spot.toFixed(6)} USDC/USDY`);
+    add(ctx.pool.liquidity > 0n, true, 'Orca pool has in-range liquidity', `L=${ctx.pool.liquidity}`);
+    add(spot > 0.5 && spot < 5, true, 'Orca price believable', `${spot.toFixed(6)} USDC/USDY`);
     const vaultB = await rpc.getTokenAccountBalance(ORCA_POOL.tokenVaultB).send();
     add(
       Number(vaultB.value.uiAmountString) > 50_000,
       false,
-      'cassa USDC del pool profonda',
+      'pool USDC side is deep',
       `${Number(vaultB.value.uiAmountString).toFixed(0)} USDC`,
     );
   } catch (e) {
-    add(false, true, 'pool Orca leggibile', String(e));
+    add(false, true, 'Orca pool readable', String(e));
   }
 
-  // ── 7. il portafoglio è pronto ───────────────────────────────────────────
+  // ── 7. the wallet is ready ───────────────────────────────────────────────
   const wallet = await walletAddress();
   if (!wallet) {
-    add(false, true, 'portafoglio configurato', 'imposta KEYPAIR_PATH nel .env (o WALLET=<pubkey> per il solo controllo)');
+    add(false, true, 'wallet configured', 'set KEYPAIR_PATH in .env (or WALLET=<pubkey> for the check alone)');
   } else {
     const lamports = await rpc.getBalance(wallet, { commitment: 'confirmed' }).send();
     const sol = Number(lamports.value) / 1e9;
-    add(sol >= 0.1, true, 'SOL per commissioni e rent', `${sol.toFixed(4)} SOL su ${wallet}`);
+    add(sol >= 0.1, true, 'SOL for fees and rent', `${sol.toFixed(4)} SOL on ${wallet}`);
 
     const atas = {
       USDC: await getAssociatedTokenAddress(USDC_RESERVE.liquidityMint, wallet, USDC_RESERVE.tokenProgram),
@@ -216,15 +216,15 @@ async function main() {
       const acc = await data(ata as Address);
       let frozen = false;
       if (acc && acc.length >= 165) frozen = acc.readUInt8(108) === 2;
-      add(acc !== null && !frozen, true, `conto ${name} esistente e non congelato`, `${ata}${frozen ? ' — CONGELATO' : acc ? '' : ' — da creare'}`);
+      add(acc !== null && !frozen, true, `${name} account exists and is not frozen`, `${ata}${frozen ? ' — FROZEN' : acc ? '' : ' — needs creating'}`);
     }
   }
 
-  // ── 8. modalità di esecuzione ────────────────────────────────────────────
+  // ── 8. execution mode ────────────────────────────────────────────────────
   const dryRun = (process.env.DRY_RUN ?? 'true') !== 'false';
-  add(true, false, 'modalità', dryRun ? 'DRY_RUN attivo (nessun invio)' : '⚠ DRY_RUN DISATTIVO: invii reali');
+  add(true, false, 'mode', dryRun ? 'DRY_RUN on (nothing submitted)' : '⚠ DRY_RUN OFF: real submissions');
 
-  // ── stampa ───────────────────────────────────────────────────────────────
+  // ── report ───────────────────────────────────────────────────────────────
   const pad = Math.max(...checks.map((c) => c.label.length));
   for (const c of checks) {
     const mark = c.ok ? '✅' : c.blocking ? '❌' : '⚠️ ';
@@ -235,9 +235,9 @@ async function main() {
   const warnings = checks.filter((c) => !c.ok && !c.blocking);
   console.log();
   if (blockers.length === 0) {
-    console.log(`PRONTO — nessun blocco${warnings.length ? `, ${warnings.length} avviso/i` : ''}.`);
+    console.log(`READY — no blockers${warnings.length ? `, ${warnings.length} warning(s)` : ''}.`);
   } else {
-    console.log(`NON PRONTO — ${blockers.length} blocco/hi:`);
+    console.log(`NOT READY — ${blockers.length} blocker(s):`);
     for (const b of blockers) console.log(`   • ${b.label}: ${b.detail}`);
     process.exitCode = 1;
   }

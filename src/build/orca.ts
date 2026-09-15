@@ -23,8 +23,8 @@ import type { RpcClient } from '../rpc.js';
 import { MEMO_PROGRAM, ORCA_POOL, TOKEN_PROGRAM } from '../config.js';
 
 /**
- * Uscita USDY → USDC sul Whirlpool AGXrsw… (mint A = USDY, mint B = USDC).
- * Vendere USDY significa quindi `aToB = true`.
+ * USDY → USDC exit on the AGXrsw… Whirlpool (mint A = USDY, mint B = USDC).
+ * Selling USDY therefore means `aToB = true`.
  */
 
 export type OrcaContext = {
@@ -38,7 +38,7 @@ export type OrcaContext = {
 
 const A_TO_B = true;
 
-/** I 3 tick array che il programma richiede, nella direzione dello swap. */
+/** The 3 tick arrays the program requires, in the swap direction. */
 export async function tickArrayAddresses(
   poolAddress: Address,
   tickCurrentIndex: number,
@@ -46,13 +46,13 @@ export async function tickArrayAddresses(
 ): Promise<[Address, Address, Address]> {
   const span = tickSpacing * _TICK_ARRAY_SIZE();
   const start = getTickArrayStartTickIndex(tickCurrentIndex, tickSpacing);
-  // aToB = true → il prezzo scende → si attraversano array a start decrescenti
+  // aToB = true → price falls → arrays are crossed at decreasing start indices
   const starts = [start, start - span, start - 2 * span];
   const pdas = await Promise.all(starts.map((s) => getTickArrayAddress(poolAddress, s)));
   return [pdas[0]![0], pdas[1]![0], pdas[2]![0]];
 }
 
-/** Tick array assente = legittimo: lato programma SparseSwapTickSequenceBuilder lo tollera. */
+/** A missing tick array is legitimate: the program's SparseSwapTickSequenceBuilder tolerates it. */
 function emptyTickArray(startTickIndex: number): TickArrayFacade {
   return {
     startTickIndex,
@@ -68,13 +68,13 @@ function emptyTickArray(startTickIndex: number): TickArrayFacade {
 }
 
 /**
- * Costruisce il contesto a partire dagli account già letti.
- * Separato da `loadOrcaContext` così il contesto si può ricreare anche da uno
- * snapshot locale (LiteSVM) senza passare da un RPC.
+ * Builds the context from accounts that have already been read.
+ * Split out from `loadOrcaContext` so the context can also be rebuilt from a
+ * local snapshot (LiteSVM) without going through an RPC.
  */
 export async function orcaContextFromAccounts(args: {
   pool: Whirlpool;
-  /** dati grezzi dei 3 tick array nell'ordine di swap; `null` se non inizializzato */
+  /** raw data of the 3 tick arrays in swap order; `null` when uninitialized */
   tickArrayData: (Uint8Array | null)[];
   slot: bigint;
 }): Promise<OrcaContext> {
@@ -152,7 +152,7 @@ function toFacade(pool: Whirlpool): WhirlpoolFacade {
   };
 }
 
-/** Quote esatta sull'input: quanti USDC escono vendendo `usdyIn` USDY. */
+/** Exact-input quote: how much USDC comes out of selling `usdyIn` USDY. */
 export function quoteUsdyToUsdc(
   ctx: OrcaContext,
   usdyIn: bigint,
@@ -173,12 +173,12 @@ export function quoteUsdyToUsdc(
 }
 
 /**
- * `swap_v2`. Entrambe le mint del pool sono SPL Token legacy, quindi `swap` v1
- * basterebbe; usiamo la v2 perché è la variante che Orca mantiene e perché
- * regge reserve Token-2022 senza riscrivere il builder.
+ * `swap_v2`. Both pool mints are legacy SPL Token, so `swap` v1 would do; v2 is
+ * used because it is the variant Orca maintains and because it handles
+ * Token-2022 reserves without rewriting the builder.
  *
- * `sqrtPriceLimit = 0n` delega il limite al programma (MIN/MAX secondo direzione).
- * La protezione vera è `otherAmountThreshold`.
+ * `sqrtPriceLimit = 0n` delegates the bound to the program (MIN/MAX by
+ * direction). The real protection is `otherAmountThreshold`.
  */
 export function buildSwapIx(args: {
   ctx: OrcaContext;
@@ -213,13 +213,13 @@ export function buildSwapIx(args: {
   }) as unknown as Instruction;
 }
 
-/** Prezzo spot USDY→USDC implicito in sqrtPrice (entrambe le mint hanno 6 decimali). */
+/** USDY→USDC spot price implied by sqrtPrice (both mints have 6 decimals). */
 export function spotPrice(pool: Whirlpool): number {
   const sp = Number(pool.sqrtPrice) / 2 ** 64;
   return sp * sp;
 }
 
-/** Decodifica un account Whirlpool da byte grezzi (usato dai test sul mondo locale). */
+/** Decodes a Whirlpool account from raw bytes (used by the local-world tests). */
 export function decodeWhirlpoolData(data: Uint8Array): Whirlpool {
   const acc = decodeWhirlpool({
     address: ORCA_POOL.address,

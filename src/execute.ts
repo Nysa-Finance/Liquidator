@@ -9,11 +9,11 @@ import { log } from './logger.js';
 import type { RpcClient, RpcPool } from './rpc.js';
 
 /**
- * Simulazione, priority fee, invio, conferma.
+ * Simulation, priority fee, submission, confirmation.
  *
- * Regola non negoziabile: non si invia nulla che non sia stato simulato, e la
- * simulazione non si considera superata solo perché `err == null` — si legge il
- * delta reale dell'ATA USDC.
+ * Non-negotiable rule: nothing is submitted that has not been simulated, and a
+ * simulation does not count as passed merely because `err == null` — the real
+ * delta of the USDC token account is read.
  */
 
 export type SimResult = {
@@ -24,7 +24,7 @@ export type SimResult = {
   usdcDelta: bigint | null;
 };
 
-/** Legge l'amount (u64 LE @ offset 64) da un SPL token account base64. */
+/** Reads amount (u64 LE @ offset 64) from a base64 SPL token account. */
 function tokenAmountFromBase64(data: string): bigint {
   const buf = Buffer.from(data, 'base64');
   if (buf.length < 72) return 0n;
@@ -64,11 +64,11 @@ export async function simulate(
 }
 
 /**
- * Priority fee adattiva.
+ * Adaptive priority fee.
  *
- * Il costo è `computeUnitLimit × price`, non `unitsConsumed × price`: un limite
- * gonfiato è denaro buttato. Il cap relativo al profitto atteso evita di regalare
- * ai validator tutto il margine in una gara.
+ * Cost is `computeUnitLimit × price`, not `unitsConsumed × price`: an inflated
+ * limit is wasted money. The cap relative to expected profit avoids handing the
+ * whole margin to validators in a race.
  */
 export class PriorityFeeOracle {
   private multiplier = 1;
@@ -80,7 +80,7 @@ export class PriorityFeeOracle {
     expectedProfitUsdc: Decimal,
     solPriceUsdc: number,
   ): Promise<bigint> {
-    let base = 1_000n; // micro-lamport/CU di fallback
+    let base = 1_000n; // fallback micro-lamports/CU
     try {
       const fees = await rpc.getRecentPrioritizationFees(writableAccounts).send();
       const vals = fees.map((f) => Number(f.prioritizationFee)).sort((a, b) => a - b);
@@ -89,18 +89,18 @@ export class PriorityFeeOracle {
         base = BigInt(Math.max(1, Math.round(p75)));
       }
     } catch (e) {
-      log.warn({ err: String(e) }, 'getRecentPrioritizationFees fallita, uso fallback');
+      log.warn({ err: String(e) }, 'getRecentPrioritizationFees failed, using fallback');
     }
 
     let price = base * BigInt(this.multiplier);
 
-    // cap assoluto
+    // absolute cap
     const lamports = (price * BigInt(computeUnitLimit)) / 1_000_000n;
     if (lamports > BigInt(CFG.maxPriorityLamports)) {
       price = (BigInt(CFG.maxPriorityLamports) * 1_000_000n) / BigInt(computeUnitLimit);
     }
 
-    // cap relativo al profitto atteso
+    // cap relative to expected profit
     const maxUsdc = expectedProfitUsdc.mul(CFG.maxPriorityProfitFraction);
     const maxLamports = maxUsdc.div(solPriceUsdc).mul(1e9);
     if (maxLamports.gt(0)) {
@@ -128,8 +128,8 @@ export async function sendAndConfirm(
   const signature = await rpc
     .sendTransaction(wireTxBase64 as never, {
       encoding: 'base64',
-      skipPreflight: true, // la preflight l'abbiamo già fatta noi, e meglio
-      maxRetries: 0n,      // rebroadcast gestito qui sotto
+      skipPreflight: true, // we already ran preflight ourselves, and better
+      maxRetries: 0n,      // rebroadcast handled below
       preflightCommitment: 'processed',
     })
     .send();
@@ -148,7 +148,7 @@ export async function sendAndConfirm(
     if (height > lastValidBlockHeight) {
       return { signature, landed: false, err: 'blockhash-expired' };
     }
-    // rebroadcast: la signature è identica, l'operazione è idempotente
+    // rebroadcast: identical signature, so the operation is idempotent
     await rpc
       .sendTransaction(wireTxBase64 as never, {
         encoding: 'base64',
@@ -167,7 +167,7 @@ export async function signToWire(message: Parameters<typeof signTransactionMessa
   return getBase64EncodedWireTransaction(signed);
 }
 
-/** Lock in-process: un solo piano in volo per obligation. */
+/** In-process lock: one plan in flight per obligation. */
 export class InFlightGuard {
   private readonly inFlight = new Map<string, number>();
 

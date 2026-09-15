@@ -2,13 +2,13 @@ import { createDefaultRpcTransport, createSolanaRpcFromTransport } from '@solana
 import type { RpcClient } from './rpc.js';
 
 /**
- * Client RPC che *non può* scrivere sulla catena.
+ * An RPC client that *cannot* write to the chain.
  *
- * Non è una promessa: è un cancello. Il transport ispeziona il metodo JSON-RPC
- * prima di inviarlo e lancia un'eccezione se non è nella whitelist. Anche un
- * refactor sbadato che chiamasse `sendTransaction` non riuscirebbe a spedirlo.
+ * This is a gate, not a promise: the transport inspects the JSON-RPC method
+ * before sending it and throws if the method is not on the allowlist. Even a
+ * careless refactor calling `sendTransaction` would never get it on the wire.
  *
- * Lo usano sia i test live sia `npm run preflight`.
+ * Used by both the live tests and `npm run preflight`.
  */
 const ALLOWED = new Set([
   'getAccountInfo',
@@ -26,13 +26,13 @@ const ALLOWED = new Set([
   'getTokenAccountBalance',
   'getTransaction',
   'getVersion',
-  // la simulazione non modifica lo stato: nessuna firma valida, nessun invio
+  // simulation does not mutate state: no valid signature, nothing submitted
   'simulateTransaction',
 ]);
 
 export class WriteAttemptError extends Error {
   constructor(method: string) {
-    super(`Client in sola lettura: il metodo "${method}" è vietato`);
+    super(`Read-only client: method "${method}" is not allowed`);
     this.name = 'WriteAttemptError';
   }
 }
@@ -41,7 +41,7 @@ export function createReadOnlyRpc(url: string): RpcClient {
   const inner = createDefaultRpcTransport({ url });
   const guarded = (async (config: Parameters<typeof inner>[0]) => {
     const payload = (config as { payload?: { method?: string } }).payload;
-    const method = payload?.method ?? '<sconosciuto>';
+    const method = payload?.method ?? '<unknown>';
     if (!ALLOWED.has(method)) throw new WriteAttemptError(method);
     return inner(config as never);
   }) as typeof inner;

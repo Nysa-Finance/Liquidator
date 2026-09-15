@@ -21,11 +21,11 @@ import {
 } from '../config.js';
 
 /**
- * Builder delle istruzioni klend.
+ * klend instruction builders.
  *
- * Vincolo critico (lending_market/flash_ixs.rs): borrow e repay del flash loan
- * devono avere elenchi account IDENTICI, stessa lunghezza e stesso ordine.
- * Per questo entrambe le ix sono costruite da `flashLoanPair`, mai separatamente.
+ * Critical constraint (lending_market/flash_ixs.rs): the flash loan's borrow and
+ * repay must carry IDENTICAL account lists — same length, same order. That is
+ * why both instructions come out of `flashLoanPair`, never built separately.
  */
 
 export type Pdas = { targetMarketAuth: Address; flashMarketAuth: Address };
@@ -36,7 +36,7 @@ export async function loadPdas(): Promise<Pdas> {
   return { targetMarketAuth, flashMarketAuth };
 }
 
-/** `refresh_reserve`. Su questo market solo Scope è configurato: Pyth/Switchboard = None. */
+/** `refresh_reserve`. Only Scope is configured on this market: Pyth/Switchboard = None. */
 export function refreshReserveIx(reserve: Address, market: Address, scopePrices: Address): Instruction {
   return refreshReserve(
     {
@@ -55,9 +55,9 @@ export function refreshReserveIx(reserve: Address, market: Address, scopePrices:
 /**
  * `refresh_obligation`.
  *
- * I remaining accounts sono posizionali e il programma ne verifica il numero esatto:
- * prima TUTTE le deposit reserve, poi TUTTE le borrow reserve, e — solo se
- * l'obligation ha un referrer — un `referrer_token_state` per ogni borrow.
+ * The remaining accounts are positional and the program checks their exact
+ * count: first ALL deposit reserves, then ALL borrow reserves, and — only if the
+ * obligation has a referrer — one `referrer_token_state` per borrow.
  */
 export function refreshObligationIx(args: {
   market: Address;
@@ -80,10 +80,10 @@ export function refreshObligationIx(args: {
 }
 
 /**
- * Coppia flash borrow / flash repay sulla reserve USDC del Main Market.
+ * Flash borrow / flash repay pair on the Main Market's USDC reserve.
  *
- * `borrowInstructionIndex` NON è una costante: va passato l'indice reale che la ix
- * di borrow occupa nell'array finale della transazione.
+ * `borrowInstructionIndex` is NOT a constant: pass the real index the borrow
+ * instruction occupies in the transaction's final instruction array.
  */
 export function flashLoanPair(args: {
   signer: KeyPairSigner;
@@ -99,7 +99,7 @@ export function flashLoanPair(args: {
     reserve: FLASH_SOURCE.reserve,
     reserveLiquidityMint: FLASH_SOURCE.liquidityMint,
     reserveLiquidityFeeReceiver: FLASH_SOURCE.feeVault,
-    // Stessi placeholder in entrambe le ix, altrimenti gli elenchi divergono.
+    // Same placeholders in both instructions, otherwise the lists diverge.
     referrerTokenState: none<Address>(),
     referrerAccount: none<Address>(),
     sysvarInfo: SYSVAR_INSTRUCTIONS,
@@ -129,13 +129,13 @@ export function flashLoanPair(args: {
 /**
  * `liquidate_obligation_and_redeem_reserve_collateral_v2`.
  *
- * Si usa la V2 e non la V1: la V1 impone via `check_refresh_ixs!` che le ix
- * `refresh_obligation_farms_for_reserve` stiano nelle posizioni immediatamente
- * adiacenti, incompatibile con l'incastro del flash loan. La V2 fa il refresh
- * farm via CPI e accetta account farm assenti.
+ * V2 rather than V1: V1 uses `check_refresh_ixs!` to require the
+ * `refresh_obligation_farms_for_reserve` instructions in the immediately
+ * adjacent positions, which is incompatible with wrapping the call in a flash
+ * loan. V2 refreshes farms via CPI and accepts absent farm accounts.
  *
- * Entrambe le reserve del market Nysa hanno farm_collateral = farm_debt =
- * 11111111111111111111111111111111 → farm accounts = null.
+ * Both Nysa reserves have farm_collateral = farm_debt =
+ * 11111111111111111111111111111111 → farm accounts = none.
  */
 export function liquidateIx(args: {
   signer: KeyPairSigner;
@@ -151,7 +151,7 @@ export function liquidateIx(args: {
     {
       liquidityAmount: new BN(args.repayAmount.toString()),
       minAcceptableReceivedLiquidityAmount: new BN(args.minReceivedUsdy.toString()),
-      // funziona solo se liquidator == obligation.owner E solo su programma staging
+      // only effective when liquidator == obligation.owner AND on the staging program
       maxAllowedLtvOverridePercent: new BN(0),
     },
     {
@@ -172,7 +172,7 @@ export function liquidateIx(args: {
         userSourceLiquidity: args.usdcAta,
         userDestinationCollateral: args.cusdyAta,
         userDestinationLiquidity: args.usdyAta,
-        // i cToken sono SEMPRE SPL Token legacy: il programma li tipizza Program<Token>
+        // cTokens are ALWAYS legacy SPL Token: the program types them as Program<Token>
         collateralTokenProgram: TOKEN_PROGRAM,
         repayLiquidityTokenProgram: USDC_RESERVE.tokenProgram,
         withdrawLiquidityTokenProgram: USDY_RESERVE.tokenProgram,

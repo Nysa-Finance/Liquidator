@@ -1,153 +1,172 @@
-# Bot di liquidazione Kamino — USDY collaterale / USDC debito
+# Kamino liquidation bot — USDY collateral / USDC debt
 
-Liquidazione atomica su **Kamino Lend** con **flash loan USDC** e uscita del collaterale
-**USDY** su **Orca Whirlpool**, tutto in una sola transazione.
+Atomic liquidation on **Kamino Lend** funded by a **USDC flash loan**, with the
+seized **USDY** collateral sold on an **Orca Whirlpool** — all in a single
+transaction.
 
-Market bersaglio: [`F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy`](https://kamino.com/curators/markets/F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy)
-— nome on-chain **"Nysa First Trial"**.
-
----
-
-## ⚠️ Leggi prima questo
-
-Il market bersaglio, allo slot ~446.815.000 (13–14 set 2026), è **vuoto**:
-**0 obligation**, **0 debito**, **0,1 USDC** e **0,1 USDY** di liquidità nelle reserve.
-Non c'è nulla da liquidare oggi e il flash loan non può partire da lì.
-
-Il bot è scritto per funzionare quando il curator aprirà il market, e il flash loan
-viene preso dal **Main Market** (~23 M USDC disponibili). Tutti i dettagli, con i punti
-del piano originale che non stavano in piedi, sono in **[docs/00-VERDETTO.md](docs/00-VERDETTO.md)**.
+Target market: [`F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy`](https://kamino.com/curators/markets/F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy)
+— on-chain name **"Nysa First Trial"**.
 
 ---
 
-## Documentazione
+## Read this first
 
-| File | Contenuto |
-|---|---|
-| [09-come-funziona.md](docs/09-come-funziona.md) | **Parti da qui se non conosci il settore**: spiegazione senza gergo, dall'inizio |
-| [00-VERDETTO.md](docs/00-VERDETTO.md) | Cosa funziona e cosa no della strategia proposta, con i dati on-chain |
-| [01-protocolli.md](docs/01-protocolli.md) | Programmi, istruzioni, account, PDA, vincoli di introspezione |
-| [02-architettura.md](docs/02-architettura.md) | Architettura a livelli del bot |
-| [03-transazione-atomica.md](docs/03-transazione-atomica.md) | Sequenza esatta delle istruzioni e perché è atomica |
-| [04-profittabilita.md](docs/04-profittabilita.md) | Equazione di profitto completa e soglie di esecuzione |
-| [05-implementazione.md](docs/05-implementazione.md) | Rust vs TypeScript, struttura, piano di lavoro, cosa manca |
-| [06-affidabilita.md](docs/06-affidabilita.md) | Latenza, dati stantii, blockhash, priority fee, doppia esecuzione |
-| [07-sicurezza.md](docs/07-sicurezza.md) | Rischi e salvaguardie, checklist anti-perdita |
-| [10-produzione.md](docs/10-produzione.md) | Come andare in produzione: prerequisiti, sequenza di accensione, gestione |
-| [08-testing.md](docs/08-testing.md) | Come testare in sicurezza: fork locale, validator clonato, devnet, dry run |
+At slot ~446,815,000 (2026-09-13/15) the target market is **not operational**:
 
-Ogni affermazione nei documenti è marcata **[V]** (verificata su sorgente o stato on-chain)
-o **[A]** (assunzione/stima).
+- **0 obligations**, no debt, 0.1 USDC and 0.1 USDY of liquidity;
+- the **USDY reserve's oracle points at a placeholder Scope index** that reads
+  `0.000001 USD` instead of ~1.145, so any deposit is valued at essentially zero
+  and nobody can borrow against it.
 
----
+The bot is built for when the curator opens the market. The flash loan is taken
+from Kamino's **Main Market** (~23M USDC available), which is legal because
+nothing ties the borrowed reserve to the market of the liquidated obligation.
 
-## Avvio rapido
+Full evidence in **[docs/01-protocol.md](docs/01-protocol.md)**.
 
 ```bash
-npm install
-cp .env.example .env    # poi compila RPC_PRIMARY e KEYPAIR_PATH
-```
-
-Verifica che i parametri on-chain siano ancora quelli cablati in `src/config.ts`
-(sola lettura, nessuna chiave richiesta):
-
-```bash
-npm run inspect
-```
-
-Quote reale USDY → USDC sul pool di uscita, per tarare lo slippage:
-
-```bash
-npm run quote 1000 10000 50000
-```
-
-Avvia in dry run (default: **non invia nulla**):
-
-```bash
-npm start
-```
-
-Verifica di prontezza per la produzione (sola lettura, nessuna chiave necessaria):
-
-```bash
-npm run preflight
-```
-
-Test in **sola lettura** contro mainnet e un market attivo vero (nessuna chiave, nessun invio):
-
-```bash
-npm run test:live
-```
-
-Test contro programmi e stato reali di mainnet, eseguiti **in locale**, senza rete:
-
-```bash
-npm run fixtures   # scarica programmi e account da mainnet in fixtures/
-npm test
-```
-
-Typecheck:
-
-```bash
-npm run typecheck
+npm run preflight   # read-only; reports exactly what is missing
 ```
 
 ---
 
-## La transazione
+## The transaction
 
 ```
 0  ComputeBudget  setComputeUnitLimit
 1  ComputeBudget  setComputeUnitPrice
 2  klend          refreshReserve(USDC)              + Scope
 3  klend          refreshReserve(USDY)              + Scope
-4  klend          refreshObligation                 + reserve in remaining accounts
-5  klend          flashBorrowReserveLiquidity       ← Main Market, ~23 M USDC
+4  klend          refreshObligation                 + reserves in remaining accounts
+5  klend          flashBorrowReserveLiquidity       <- Main Market, ~23M USDC
 6  klend          liquidateObligationAndRedeemReserveCollateralV2
-7  whirlpool      swapV2  USDY → USDC  (aToB = true)
+7  whirlpool      swapV2  USDY -> USDC  (aToB = true)
 8  klend          flashRepayReserveLiquidity        borrowInstructionIndex = 5
 ```
 
-Se lo swap rende meno del dovuto, la ix 8 fallisce e **l'intera transazione fa revert**:
-il flash loan non è mai avvenuto. Costo di un tentativo fallito: base fee + priority fee.
+If the swap returns less than the repayment needs, instruction 8 fails and **the
+entire transaction reverts**: the flash loan never happened. A failed attempt
+costs base fee plus priority fee — fractions of a cent. No capital is ever at
+risk, because the capital is the flash loan.
 
----
-
-## Numeri chiave verificati
+## Verified numbers
 
 | | |
 |---|---|
-| Liquidation bonus USDY | **200–500 bps** |
-| Close factor | **20 %** (100 % sopra 95 % di LTV) |
-| Protocol liquidation fee | **0 %** (minimo 1 lamport) |
-| Flash loan fee (Main Market USDC) | **0,001 %** (`flash_loan_fee_sf = 11529215046068`, scala 2^60) |
-| Fee pool Orca USDY/USDC | **0,16 %** |
-| Impatto prezzo misurato, 50.000 USDY (fee esclusa) | **0,015 %** |
-| Margine netto atteso a bonus minimo | **≈ 181 bps** |
-| Market permissionato? | **No** — liquidazione permissionless |
+| USDY liquidation bonus | **200-500 bps** |
+| Close factor | **20%** (100% above 95% LTV) |
+| Protocol liquidation fee | **0%** (1 lamport floor) |
+| Flash loan fee (Main Market USDC) | **0.001%** (`flash_loan_fee_sf = 11529215046068`, 2^60 scale) |
+| Orca USDY/USDC pool fee | **0.16%** |
+| Measured price impact, 50,000 USDY (fee excluded) | **0.015%** |
+| Expected net margin at minimum bonus | **~181 bps** |
+| Market permissioned? | **No** — liquidation is permissionless |
 
----
+## Quick start
 
-## Stato
+```bash
+npm install
+cp .env.example .env    # fill in RPC_PRIMARY and KEYPAIR_PATH
+```
 
-13 test verdi (vedi [docs/08-testing.md](docs/08-testing.md)).
+Check that on-chain parameters still match what is hardcoded in `src/config.ts`
+(read-only, no key needed):
 
-**In sola lettura contro mainnet** (`npm run test:live`): lo scanner legge tutte le
-**106.217 posizioni** del Main Market in **una chiamata da ~3 secondi** grazie al
-`dataSlice` (7 MB invece di 355), gli offset dei campi sono riverificati contro il decoder
-ufficiale, e le costanti di `src/config.ts` sono confrontate con lo stato on-chain.
+```bash
+npm run inspect
+```
 
-**In locale con LiteSVM** (`npm test`), sui programmi veri:
+Real USDY -> USDC quote on the exit pool, to calibrate slippage:
 
-- `flashBorrow` + `flashRepay` passano l'introspezione — e falliscono, come devono, con
-  `borrowInstructionIndex` sbagliato di uno;
-- `refreshReserve` consuma i prezzi Scope riscritti nel mondo locale;
-- `swapV2` USDY→USDC eseguito davvero: **1.000 USDY → 1.141,68236 USDC**, identico al
-  quote off-chain (**0,000 bps** di scarto), **37.318 CU**.
+```bash
+npm run quote 1000 10000 50000
+```
 
-Non ancora testata la **liquidazione** vera e propria: serve un'obligation con debito, e
-nel market bersaglio non ce n'è nessuna. La ricetta per costruirne una nel mondo locale è
-in [docs/08-testing.md](docs/08-testing.md) § "Il pezzo che manca".
+Run in dry-run mode (the default: **nothing is ever submitted**):
 
-`DRY_RUN=true` è il default. Non toglierlo prima di aver visto un profitto positivo in
-simulazione.
+```bash
+npm start
+```
+
+## Tests
+
+Read-only against real mainnet and an active market — no key, no submission:
+
+```bash
+npm run test:live
+```
+
+Against the real mainnet programs, executed **locally** with no network:
+
+```bash
+npm run fixtures   # pull programs and accounts from mainnet into fixtures/
+npm test
+```
+
+13 tests pass today.
+
+**Read-only live** — the scanner reads all **106,217 positions** of the Main
+Market in **one ~3-second call** using `dataSlice` (7 MB instead of 355), field
+offsets are re-verified against the official decoder, and the constants in
+`src/config.ts` are compared with on-chain state.
+
+**Local (LiteSVM)** on the real programs:
+
+- `flashBorrow` + `flashRepay` pass introspection — and fail, as they must, when
+  `borrowInstructionIndex` is off by one;
+- `refreshReserve` consumes Scope prices rewritten in the local world;
+- `swapV2` USDY->USDC actually executes: **1,000 USDY -> 1,141.68236 USDC**,
+  identical to the off-chain quote (**0.000 bps** of drift), **37,318 CU**.
+
+The **liquidation** itself is not covered yet: it needs an obligation carrying
+debt, and the target market has none. The recipe for building one in the local
+world is in [docs/04-testing.md](docs/04-testing.md).
+
+## Documentation
+
+| File | Contents |
+|---|---|
+| [01-protocol.md](docs/01-protocol.md) | Verified protocol reference: instructions, accounts, constraints, and the target-market findings |
+| [02-design.md](docs/02-design.md) | The atomic transaction, bot architecture, language choice |
+| [03-profitability.md](docs/03-profitability.md) | Profit equation and execution thresholds |
+| [04-testing.md](docs/04-testing.md) | Testing tiers: local fork, live read-only, cloned validator |
+| [05-operations.md](docs/05-operations.md) | Reliability, security, go-live sequence, day-2 operations |
+
+Every claim is marked **[V]** (verified against source or on-chain state) or
+**[A]** (assumption or estimate).
+
+## Project layout
+
+```
+src/
+  config.ts             verified constants + .env
+  rpc.ts                RPC pool with failover, key loading
+  readonly.ts           RPC client that refuses every write
+  scanner.ts            health prefilter over all positions (dataSlice)
+  eligibility.ts        "is it liquidatable?" — off-chain replica of the rules
+  profit.ts             "is it worth it?" — profit equation and thresholds
+  execute.ts            simulation, priority fee, submission, confirmation, lock
+  index.ts              the main loop
+  build/
+    klend.ts            refresh, flash loan pair, liquidate V2
+    orca.ts             quote + swapV2 + tick arrays
+    computeBudget.ts    the two budget instructions, written by hand
+    tx.ts               assembles the 9 instructions into the atomic transaction
+tests/
+  world.ts              loads the local fork into LiteSVM + helpers
+  readonly-rpc.ts       live-test endpoints and the read-only client
+  *.test.ts             refresh / flash loan / swap / live read-only
+scripts/
+  preflight.ts          production readiness check
+  inspect-market.mjs    prints the real state of a market
+  quote-orca.ts         real quote on the exit pool
+  dump-fixtures.mjs     downloads programs and accounts for the local world
+```
+
+## Status
+
+`DRY_RUN=true` is the default. The transaction build-and-submit path has never
+run against a live liquidatable position, because none exists on the target
+market. Five items remain before production (ALT, token accounts, wiring the
+scanner into the loop, real SOL price, reconciliation) — see
+[docs/05-operations.md](docs/05-operations.md).

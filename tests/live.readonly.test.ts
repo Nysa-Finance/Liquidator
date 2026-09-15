@@ -22,12 +22,12 @@ import { loadOrcaContext, quoteUsdyToUsdc, spotPrice } from '../src/build/orca.j
 import { createReadOnlyRpc, LIVE_MARKET, LIVE_RPC, WriteAttemptError } from './readonly-rpc.js';
 
 /**
- * Test di SOLA LETTURA contro mainnet reale.
+ * READ-ONLY tests against real mainnet.
  *
- * Nessuna chiave, nessuna firma, nessun invio: il client RPC rifiuta a monte
- * qualunque metodo che non sia una lettura (vedi tests/readonly-rpc.ts).
- * Girano contro un market ATTIVO (di default il Main Market di Kamino) perché
- * il market bersaglio del progetto è ancora vuoto.
+ * No key, no signature, nothing submitted: the RPC client refuses any method
+ * that is not a read, up front (see tests/readonly-rpc.ts). They run against an
+ * ACTIVE market (Kamino's Main Market by default) because the project's target
+ * market is still empty.
  *
  *   npm run test:live
  *   RPC=https://... LIVE_MARKET=<pubkey> npm run test:live
@@ -40,23 +40,23 @@ const u128 = (b: Buffer, o: number) => b.readBigUInt64LE(o) | (b.readBigUInt64LE
 
 async function accountData(pk: Address): Promise<Buffer> {
   const r = await rpc.getAccountInfo(pk, { encoding: 'base64' }).send();
-  assert.ok(r.value, `account ${pk} inesistente`);
+  assert.ok(r.value, `account ${pk} does not exist`);
   return Buffer.from((r.value.data as [string, string])[0], 'base64');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('il client è davvero in sola lettura: un invio viene bloccato prima di partire', async () => {
+test('the client really is read-only: a submission is blocked before it leaves', async () => {
   await assert.rejects(
     () => rpc.sendTransaction('AA' as never, { encoding: 'base64' }).send(),
     (e: unknown) => e instanceof WriteAttemptError,
-    'sendTransaction doveva essere rifiutato dal transport',
+    'sendTransaction should have been rejected by the transport',
   );
 });
 
-test('gli offset del prefiltro coincidono con il decoder ufficiale', async () => {
-  // Se Kamino cambia la struct Obligation, questo test fallisce invece di
-  // lasciar passare numeri sbagliati nello scanner.
+test('the prefilter offsets match the official decoder', async () => {
+  // If Kamino changes the Obligation struct, this test fails instead of
+  // letting wrong numbers through the scanner.
   const list = await rpc
     .getProgramAccounts(KLEND_PROGRAM, {
       encoding: 'base64',
@@ -68,7 +68,7 @@ test('gli offset del prefiltro coincidono con il decoder ufficiale', async () =>
     })
     .send();
   const all = list as unknown as { pubkey: Address }[];
-  assert.ok(all.length > 0, `nessuna obligation nel market ${market}`);
+  assert.ok(all.length > 0, `no obligations in market ${market}`);
 
   const sample = await rpc
     .getMultipleAccounts(all.slice(0, 40).map((a) => a.pubkey), { encoding: 'base64' })
@@ -97,47 +97,47 @@ test('gli offset del prefiltro coincidono con il decoder ufficiale', async () =>
     checked += 1;
     if (checked >= 5) break;
   }
-  assert.ok(checked >= 1, 'nessuna obligation con valore depositato: campione inutilizzabile');
-  console.log(`    offset verificati su ${checked} obligation reali`);
+  assert.ok(checked >= 1, 'no obligation with a deposited value: unusable sample');
+  console.log(`    offsets verified against ${checked} real obligations`);
 });
 
-test('prefiltro di salute su tutte le obligation del market attivo', async (t) => {
+test('health prefilter across every obligation of the active market', async (t) => {
   const t0 = Date.now();
   const rows = await scanObligationHealth(rpc, market);
   const ms = Date.now() - t0;
 
-  assert.ok(rows.length > 0, 'nessuna obligation con debito');
+  assert.ok(rows.length > 0, 'no obligation carries debt');
 
   const overThreshold = rows.filter((r) => r.healthRatio >= 1);
   const atRisk = rows.filter((r) => r.healthRatio >= 0.95 && r.healthRatio < 1);
 
-  console.log(`    ${rows.length} obligation con debito in ${ms} ms (una sola chiamata RPC)`);
-  console.log(`    sopra soglia: ${overThreshold.length}   a rischio (95-100 %): ${atRisk.length}`);
+  console.log(`    ${rows.length} obligations with debt in ${ms} ms (a single RPC call)`);
+  console.log(`    above threshold: ${overThreshold.length}   at risk (95-100%): ${atRisk.length}`);
 
   const fmt = (r: HealthRow) =>
-    `${r.obligation}  salute ${(r.healthRatio * 100).toFixed(1)}%  debito $${sfToUsd(r.debtValueSf).toFixed(2)}`;
+    `${r.obligation}  health ${(r.healthRatio * 100).toFixed(1)}%  debt $${sfToUsd(r.debtValueSf).toFixed(2)}`;
 
-  // Senza soglia di debito la classifica è dominata da posizioni chiuse o polvere,
-  // i cui valori aggregati sono rimasti congelati all'ultimo refresh.
-  console.log('    primi 5 SENZA filtro sul debito:');
+  // Without a debt floor the ranking is dominated by closed or dust positions,
+  // whose aggregate values stayed frozen at their last refresh.
+  console.log('    top 5 WITHOUT a debt filter:');
   for (const r of rows.slice(0, 5)) console.log(`      ${fmt(r)}`);
 
   const real = rows.filter((r) => sfToUsd(r.debtValueSf) >= 100);
   const realOver = real.filter((r) => r.healthRatio >= 1);
-  console.log(`    con debito >= $100: ${real.length}   di cui sopra soglia: ${realOver.length}`);
-  console.log('    primi 5 candidati veri:');
+  console.log(`    with debt >= $100: ${real.length}   of which above threshold: ${realOver.length}`);
+  console.log('    top 5 real candidates:');
   for (const r of real.slice(0, 5)) console.log(`      ${fmt(r)}`);
 
-  // Il prefiltro legge l'ULTIMO stato salvato on-chain, non i prezzi di adesso:
-  // è una lista di candidati, non di certezze. Qui verifichiamo solo la coerenza.
+  // The prefilter reads the LAST state saved on-chain, not current prices:
+  // it is a candidate list, not a certainty. Here we only check consistency.
   for (const r of rows.slice(0, 50)) {
     assert.ok(r.debtValueSf > 0n && r.unhealthyBorrowValueSf > 0n);
     assert.ok(Number.isFinite(r.healthRatio) && r.healthRatio > 0);
   }
-  t.diagnostic(`ordinamento decrescente: ${rows[0]!.healthRatio >= rows.at(-1)!.healthRatio}`);
+  t.diagnostic(`sorted descending: ${rows[0]!.healthRatio >= rows.at(-1)!.healthRatio}`);
 });
 
-test('i candidati migliori decodificano e i numeri tornano', async () => {
+test('the top candidates decode and the numbers add up', async () => {
   const rows = (await scanObligationHealth(rpc, market, KLEND_PROGRAM, { minDebtUsd: 100 })).slice(0, 10);
   const accs = await rpc
     .getMultipleAccounts(rows.map((r) => r.obligation), { encoding: 'base64' })
@@ -154,32 +154,32 @@ test('i candidati migliori decodificano e i numeri tornano', async () => {
     const uh = Number(o.unhealthyBorrowValueSf.toString());
     if (dv === 0) continue;
 
-    // il rapporto del prefiltro deve coincidere con LTV / soglia calcolati dal decode
+    // the prefilter ratio must match LTV / threshold computed from the decode
     const expected = bf / dv / (uh / dv);
     assert.ok(
       Math.abs(expected - row.healthRatio) < 1e-9,
-      `salute divergente su ${row.obligation}: ${expected} vs ${row.healthRatio}`,
+      `health mismatch on ${row.obligation}: ${expected} vs ${row.healthRatio}`,
     );
 
     const nDeposits = o.deposits.filter((d) => BigInt(d.depositedAmount.toString()) > 0n).length;
     const nBorrows = o.borrows.filter((b) => BigInt(b.borrowedAmountSf.toString()) > 0n).length;
     console.log(
-      `    ${row.obligation}  LTV ${((bf / dv) * 100).toFixed(2)}%  soglia ${((uh / dv) * 100).toFixed(2)}%  ` +
-        `depositi ${nDeposits}  prestiti ${nBorrows}`,
+      `    ${row.obligation}  LTV ${((bf / dv) * 100).toFixed(2)}%  threshold ${((uh / dv) * 100).toFixed(2)}%  ` +
+        `deposits ${nDeposits}  borrows ${nBorrows}`,
     );
     verified += 1;
   }
-  assert.ok(verified > 0, 'nessun candidato decodificato');
+  assert.ok(verified > 0, 'no candidate decoded');
 });
 
-test('le costanti in src/config.ts corrispondono ancora allo stato on-chain', async () => {
+test('the constants in src/config.ts still match on-chain state', async () => {
   const m = LendingMarket.decode(await accountData(TARGET_MARKET.address));
   assert.equal(m.liquidationMaxDebtCloseFactorPct, TARGET_MARKET.liquidationMaxDebtCloseFactorPct);
   assert.equal(m.insolvencyRiskUnhealthyLtvPct, TARGET_MARKET.insolvencyRiskUnhealthyLtvPct);
   assert.equal(
     String(m.permissioningAuthority) === '11111111111111111111111111111111',
     !TARGET_MARKET.isPermissioned,
-    'il market è diventato permissionato: la liquidazione richiederebbe una firma aggiuntiva',
+    'the market became permissioned: liquidation would require an extra signer',
   );
 
   const usdy = Reserve.decode(await accountData(USDY_RESERVE.address));
@@ -195,18 +195,18 @@ test('le costanti in src/config.ts corrispondono ancora allo stato on-chain', as
 
   const flash = Reserve.decode(await accountData(FLASH_SOURCE.reserve));
   const feeSf = BigInt(flash.config.fees.flashLoanFeeSf.toString());
-  assert.notEqual(feeSf, 2n ** 64n - 1n, 'flash loan DISABILITATI sulla reserve sorgente');
+  assert.notEqual(feeSf, 2n ** 64n - 1n, 'flash loans are DISABLED on the source reserve');
   const rate = Number(feeSf) / 2 ** 60;
   assert.ok(
     Math.abs(rate - FLASH_SOURCE.flashLoanFeeRate) < 1e-12,
-    `fee flash loan cambiata: ${rate} vs ${FLASH_SOURCE.flashLoanFeeRate}`,
+    `flash loan fee changed: ${rate} vs ${FLASH_SOURCE.flashLoanFeeRate}`,
   );
   console.log(
-    `    liquidità flash loan disponibile: ${(Number(flash.liquidity.totalAvailableAmount) / 1e6).toFixed(0)} USDC`,
+    `    flash loan liquidity available: ${(Number(flash.liquidity.totalAvailableAmount) / 1e6).toFixed(0)} USDC`,
   );
 });
 
-test('quote Orca live e controllo di divergenza oracolo', async () => {
+test('live Orca quote and oracle divergence check', async () => {
   const slot = await rpc.getSlot({ commitment: 'confirmed' }).send();
   const ctx = await loadOrcaContext(rpc, slot);
   const spot = spotPrice(ctx.pool);
@@ -215,22 +215,22 @@ test('quote Orca live e controllo di divergenza oracolo', async () => {
   const avg = Number(q.tokenEstOut) / Number(q.tokenIn);
   console.log(
     `    10.000 USDY → ${(Number(q.tokenEstOut) / 1e6).toFixed(2)} USDC  ` +
-      `(spot ${spot.toFixed(6)}, medio ${avg.toFixed(6)}, impatto ${(((avg / spot) - 1) * 100).toFixed(4)}%)`,
+      `(spot ${spot.toFixed(6)}, avg ${avg.toFixed(6)}, impact ${(((avg / spot) - 1) * 100).toFixed(4)}%)`,
   );
   assert.ok(q.tokenEstOut > 0n);
-  assert.ok(avg <= spot, 'il prezzo medio non può superare lo spot vendendo A→B');
+  assert.ok(avg <= spot, 'the average price cannot exceed spot when selling A→B');
 
-  // Prezzo che Kamino userebbe per USDY: indice Scope 3 sul feed del market.
+  // The price Kamino would use for USDY: Scope index 3 on the market's feed.
   const scope = await accountData(TARGET_MARKET.scopePrices);
   const off = 8 + 32 + 3 * 56;
   const scopeUsdy = Number(scope.readBigUInt64LE(off)) / 10 ** Number(scope.readBigUInt64LE(off + 8));
   const rho = spot / scopeUsdy;
-  console.log(`    prezzo Scope (indice 3) = ${scopeUsdy}  →  ρ = ${rho.toExponential(3)}`);
+  console.log(`    Scope price (index 3) = ${scopeUsdy}  →  ρ = ${rho.toExponential(3)}`);
 
-  // Con la configurazione attuale ρ è assurdo: la guardia deve rifiutare il piano.
+  // With the current configuration ρ is absurd: the guard must reject the plan.
   const divergenceBps = Math.abs(rho - 1) * 10_000;
   assert.ok(
     divergenceBps > CFG.maxOracleDivergenceBps,
-    'atteso che la guardia di divergenza oracolo scartasse il piano',
+    'expected the oracle divergence guard to reject the plan',
   );
 });
