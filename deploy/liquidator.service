@@ -1,0 +1,52 @@
+# systemd unit for running the bot continuously.
+#
+#   sudo cp deploy/liquidator.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now liquidator
+#   journalctl -u liquidator -f
+#
+# Adjust User, WorkingDirectory and the node path before installing.
+
+[Unit]
+Description=Kamino USDY/USDC liquidation bot
+Documentation=https://github.com/Nysa-Finance/Liquidator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=liquidator
+Group=liquidator
+WorkingDirectory=/opt/liquidator
+EnvironmentFile=/opt/liquidator/.env
+
+# npx/tsx is fine for development; in production run the compiled output so a
+# transpile error cannot take the process down mid-flight.
+ExecStartPre=/usr/bin/npm run build
+ExecStart=/usr/bin/node dist/src/index.js
+
+# Always come back up, but back off so a crash loop does not hammer the RPC.
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# Logs go to the journal; rotate there rather than writing files.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=liquidator
+
+# The process only needs its own directory and outbound network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/liquidator
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

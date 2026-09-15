@@ -85,8 +85,21 @@ leave USDC sitting on the hot key.
 ### Machine
 
 A VPS close to the validators (Frankfurt or Amsterdam for Europe) cuts tens of
-milliseconds. Nothing powerful is needed: 2 vCPU and 2 GB. Run under `systemd`
-with automatic restart.
+milliseconds. Nothing powerful is needed: 2 vCPU and 2 GB.
+
+A ready systemd unit lives at [`deploy/liquidator.service`](../deploy/liquidator.service):
+
+```bash
+sudo cp deploy/liquidator.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now liquidator
+journalctl -u liquidator -f
+```
+
+It runs the compiled output rather than `tsx`, so a transpile error cannot take
+the process down mid-flight; it restarts on failure with a back-off that stops a
+crash loop from hammering the RPC; and it is confined with `ProtectSystem=strict`
+plus a 2 GB memory ceiling.
 
 ### Monitoring
 
