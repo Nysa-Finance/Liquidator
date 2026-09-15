@@ -25,7 +25,8 @@ nothing ties the borrowed reserve to the market of the liquidated obligation.
 Full evidence in **[docs/01-protocol.md](docs/01-protocol.md)**.
 
 ```bash
-npm run preflight   # read-only; reports exactly what is missing
+npm run preflight                  # read-only; reports exactly what is missing
+MARKET=<pubkey> npm run preflight  # size up any other Kamino market
 ```
 
 ---

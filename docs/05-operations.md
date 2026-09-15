@@ -2,10 +2,16 @@
 
 > Reference command, before every start-up:
 > ```bash
-> npm run preflight
+> npm run preflight                  # the configured target market, every check
+> MARKET=<pubkey> npm run preflight  # any other market, generic checks only
 > ```
 > Read-only (the client rejects any write up front) and it reports exactly which
-> conditions are missing. Today it answers **NOT READY, 4 blockers**.
+> conditions are missing. On the target market it answers **NOT READY**, on the
+> blockers listed below.
+>
+> Generic mode skips the USDY/USDC pair and the Orca exit route, which only mean
+> something on the configured market, and prints a per-reserve breakdown instead.
+> Useful for sizing up any Kamino market before pointing the bot at it.
 
 ---
 
@@ -13,11 +19,24 @@
 
 They belong to the market curator (`66pW72Fchnr34FGgXrxheGs3BbUsDSwJmGcK7m8Bz1Yv`).
 
-### 1.1 The USDY oracle points at a placeholder index — the worst one
+### 1.1 The USDY oracle points at the retired-asset index — the worst one
 
 The USDY reserve's scope chain is `[3]`, and index 3 of the feed holds
 **0.000001 USD**. The real USDY price (~1.145) sits at indices 79/97 of the same
-feed. While this stands, `refresh_reserve` writes a near-zero USDY price: every
+feed.
+
+Index 3 is not an arbitrary bad value: it is what Kamino points a **retired**
+reserve at. Running `MARKET=7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF npm run
+preflight` finds five more reserves on the Main Market reading index 3 — CHAI,
+STEP, xSTEP, kSOLJITOSOLOrca, kSOLJITOSOLRaydium — and every one of them is
+decommissioned: either `status != active`, or usable as neither collateral
+(`liquidationThresholdPct = 0`) nor debt (`borrowLimit = 0`). Index 191 serves
+the same purpose for another group.
+
+Which makes the Nysa configuration internally inconsistent: the USDY reserve is
+`status = active` with `loanToValuePct = 70` and `liquidationThresholdPct = 75`
+— configured as live collateral — while pointing at the marker Kamino uses for
+dead assets. While this stands, `refresh_reserve` writes a near-zero USDY price: every
 deposit is valued at nothing, nobody can borrow, and the liquidation bonus is
 meaningless. The bot would refuse the plan anyway thanks to the oracle divergence
 guard (rho ~ 1.1 million) — correct behaviour, but it means it would never work.
