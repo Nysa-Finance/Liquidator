@@ -21,8 +21,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
+
+      # The lockfile is written by npm 12, and npm 10/11 resolve optional peer
+      # dependencies differently — enough for `npm ci` to reject the lock as out
+      # of sync. Pin the same major the lockfile was authored with.
+      - run: npm i -g npm@12
       - run: npm ci
 
       - name: Fetch mainnet fixtures
