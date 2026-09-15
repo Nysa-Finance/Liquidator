@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.log
+keypair*.json
+liquidator*.json
+.lookuptable*
+fixtures/programs/
+fixtures/accounts/
+fixtures/manifest.json
+.DS_Store
