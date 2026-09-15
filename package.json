@@ -13,7 +13,8 @@
     "test": "tsx --test tests/refresh.test.ts tests/flashloan.test.ts tests/swap.test.ts",
     "test:live": "tsx --test tests/live.readonly.test.ts",
     "test:all": "tsx --test tests/*.test.ts",
-    "preflight": "tsx scripts/preflight.ts"
+    "preflight": "tsx scripts/preflight.ts",
+    "report": "tsx scripts/test-report.ts"
   },
   "type": "module",
   "devDependencies": {

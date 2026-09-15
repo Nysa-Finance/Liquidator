@@ -103,7 +103,16 @@ npm run fixtures   # pull programs and accounts from mainnet into fixtures/
 npm test
 ```
 
-13 tests pass today.
+13 tests pass today. The captured output — with versions, commit and mainnet slot
+— is committed at **[docs/TEST-REPORT.md](docs/TEST-REPORT.md)** and regenerated with:
+
+```bash
+npm run report -- --live
+```
+
+CI runs typecheck and the local suites on every push; a daily
+[canary workflow](.github/workflows/canary.yml) re-runs the read-only mainnet
+checks and republishes the report.
 
 **Read-only live** — the scanner reads all **106,217 positions** of the Main
 Market in **one ~3-second call** using `dataSlice` (7 MB instead of 355), field
@@ -131,6 +140,7 @@ world is in [docs/04-testing.md](docs/04-testing.md).
 | [03-profitability.md](docs/03-profitability.md) | Profit equation and execution thresholds |
 | [04-testing.md](docs/04-testing.md) | Testing tiers: local fork, live read-only, cloned validator |
 | [05-operations.md](docs/05-operations.md) | Reliability, security, go-live sequence, day-2 operations |
+| [TEST-REPORT.md](docs/TEST-REPORT.md) | Generated: captured output of every suite, with commit and slot |
 
 Every claim is marked **[V]** (verified against source or on-chain state) or
 **[A]** (assumption or estimate).

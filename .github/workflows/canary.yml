@@ -1,0 +1,49 @@
+name: Mainnet canary
+
+# Read-only watch on the live protocol state. It answers one question: has
+# anything changed on-chain that would break the bot?
+#
+# The test "the constants in src/config.ts still match on-chain state" is the
+# point of this workflow — a curator changing a market parameter, or flash loans
+# being disabled on the source reserve, shows up here instead of in a lost
+# transaction.
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # daily, 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  canary:
+    name: live read-only checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Fetch mainnet fixtures
+        env:
+          RPC: ${{ secrets.SOLANA_RPC || 'https://api.mainnet-beta.solana.com' }}
+        run: npm run fixtures
+
+      # Regenerates docs/TEST-REPORT.md. Nothing is signed or submitted: the RPC
+      # transport used by the live suites rejects every non-read method.
+      - name: Generate report
+        env:
+          RPC: ${{ secrets.SOLANA_RPC || 'https://api.mainnet-beta.solana.com' }}
+        run: npm run report -- --live
+
+      - name: Publish report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: docs/TEST-REPORT.md
+
+      - name: Show readiness
+        if: always()
+        run: sed -n '/## Production readiness/,$p' docs/TEST-REPORT.md >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  local-tests:
+    name: local tests (LiteSVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Fixtures are the real mainnet programs and accounts; they are not
+      # committed (~4.8 MB) so CI pulls them fresh. Set the SOLANA_RPC secret to
+      # a real provider: the public endpoint rate-limits CI runners hard.
+      - name: Fetch mainnet fixtures
+        env:
+          RPC: ${{ secrets.SOLANA_RPC || 'https://api.mainnet-beta.solana.com' }}
+        run: npm run fixtures
+
+      # The tests themselves touch no network: they run the downloaded programs
+      # inside LiteSVM.
+      - run: npm test
