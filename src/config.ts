@@ -1,5 +1,4 @@
 import { address, type Address } from '@solana/kit';
-import 'dotenv/config';
 
 /**
  * Constants VERIFIED on-chain / against program source at slot ~446,813,000
@@ -12,11 +11,7 @@ import 'dotenv/config';
 
 // ── Programs ───────────────────────────────────────────────────────────────
 export const KLEND_PROGRAM = address('KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD');
-export const WHIRLPOOL_PROGRAM = address('whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc');
-export const SCOPE_PROGRAM = address('HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ');
 export const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
-export const TOKEN_2022_PROGRAM = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
-export const ATA_PROGRAM = address('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 export const MEMO_PROGRAM = address('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 export const SYSVAR_INSTRUCTIONS = address('Sysvar1nstructions1111111111111111111111111');
 export const FARMS_PROGRAM = address('FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr');
@@ -64,7 +59,6 @@ export const USDC_RESERVE = {
   supplyVault: address('68YwkFhagT33k8485VtX1MhMYpab97c1MjpWcXFuTYea'),
   feeVault: address('HS5RA3CPZsUvgsKTsgn17tUqKMXiQcCCXK6tiJGfaj1G'),
   collateralMint: address('Eyq6nikS6Mh5zsG2iLCLAB9Rz2dUEsxR5aqMAdxCdQLZ'),
-  collateralSupplyVault: address('AHyTfgUZKsoAgFMx6HtxzhAb7EpUfoaScuJAYRd3tLpm'),
   borrowFactorPct: 100,
   hasFarms: false,
 } as const;
@@ -129,7 +123,6 @@ export const CFG = {
   get minProfitUsdc() { return num('MIN_PROFIT_USDC', 2.0); },
   get minMarginBps() { return num('MIN_MARGIN_BPS', 50); },
   get maxOracleDivergenceBps() { return num('MAX_ORACLE_DIVERGENCE_BPS', 100); },
-  get maxSnapshotAgeSlots() { return num('MAX_SNAPSHOT_AGE_SLOTS', 4); },
   get liqSlippageBps() { return num('LIQ_SLIPPAGE_BPS', 50); },
   get swapSlippageBps() { return num('SWAP_SLIPPAGE_BPS', 30); },
   get maxPriorityLamports() { return num('MAX_PRIORITY_LAMPORTS', 2_000_000); },
@@ -139,5 +132,4 @@ export const CFG = {
   get logLevel() { return process.env.LOG_LEVEL ?? 'info'; },
 } as const;
 
-export type ReserveRef = typeof USDY_RESERVE | typeof USDC_RESERVE;
 export type { Address };

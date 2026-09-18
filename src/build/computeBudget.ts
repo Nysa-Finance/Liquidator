@@ -1,4 +1,4 @@
-import { address, AccountRole, type Instruction } from '@solana/kit';
+import { address, type Instruction } from '@solana/kit';
 
 export const COMPUTE_BUDGET_PROGRAM = address('ComputeBudget111111111111111111111111111111');
 
@@ -17,5 +17,3 @@ export function computeUnitPriceIx(microLamports: bigint): Instruction {
   new DataView(data.buffer).setBigUint64(1, microLamports, true);
   return { programAddress: COMPUTE_BUDGET_PROGRAM, accounts: [], data };
 }
-
-export { AccountRole };

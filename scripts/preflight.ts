@@ -25,9 +25,9 @@ import {
 } from '../src/config.js';
 import { createReadOnlyRpc } from '../src/readonly.js';
 import {
-  OBLIGATION_ACCOUNT_SIZE,
-  OBLIGATION_OFFSETS,
+  RESERVE_ACCOUNT_SIZE,
   scanObligationHealth,
+  scopePrice,
   sfToUsd,
 } from '../src/scanner.js';
 import { loadOrcaContext, spotPrice } from '../src/build/orca.js';
@@ -38,8 +38,6 @@ const rpc = createReadOnlyRpc(RPC);
 const MARKET = address(process.env.MARKET ?? TARGET_MARKET.address);
 /** The pair-specific and Orca checks only mean something on the configured market. */
 const IS_TARGET = MARKET === TARGET_MARKET.address;
-
-const RESERVE_ACCOUNT_SIZE = 8624;
 
 type Check = { ok: boolean; blocking: boolean; label: string; detail: string };
 const checks: Check[] = [];
@@ -93,13 +91,6 @@ async function loadReserves(market: Address): Promise<LoadedReserve[]> {
   return out;
 }
 
-/** Reads one Scope price entry. Layout: disc(8) + oracle_mappings(32) + [DatedPrice; 512], 56 bytes each. */
-function scopePrice(feed: Buffer, index: number): { price: number; ageSeconds: number } {
-  const o = 8 + 32 + index * 56;
-  const price = Number(feed.readBigUInt64LE(o)) / 10 ** Number(feed.readBigUInt64LE(o + 8));
-  return { price, ageSeconds: Math.floor(Date.now() / 1000) - Number(feed.readBigUInt64LE(o + 24)) };
-}
-
 const symbolOf = (r: LoadedReserve) =>
   Buffer.from(r.state.config.tokenInfo.name).toString('utf8').replace(/\0/g, '') || '?';
 
@@ -114,8 +105,8 @@ async function main() {
     add(false, true, 'market exists', `${MARKET} not found`);
   } else {
     const m = LendingMarket.decode(mBuf);
-    const name = Buffer.from(m.name ?? []).toString('utf8').replace(/\0/g, '');
-    add(true, false, 'market name', name || '(unnamed)');
+    console.log(`name: ${Buffer.from(m.name ?? []).toString('utf8').replace(/\0/g, '') || '(unnamed)'}`);
+    console.log(`close factor: ${m.liquidationMaxDebtCloseFactorPct}% (100% above ${m.insolvencyRiskUnhealthyLtvPct}% LTV)\n`);
     add(m.emergencyMode === 0, true, 'emergency mode off', `emergencyMode=${m.emergencyMode}`);
     add(
       m.priceTriggeredLiquidationDisabled === 0,
@@ -128,12 +119,6 @@ async function main() {
       true,
       'market is permissionless',
       `permissioningAuthority=${m.permissioningAuthority}`,
-    );
-    add(
-      true,
-      false,
-      'close factor',
-      `${m.liquidationMaxDebtCloseFactorPct}% (100% above ${m.insolvencyRiskUnhealthyLtvPct}% LTV)`,
     );
     if (IS_TARGET) {
       add(
@@ -154,18 +139,9 @@ async function main() {
     ? `${reserves.length} active`
     : `${inactive.length} not active: ${inactive.map(symbolOf).join(', ')}`);
 
-  // Oracle sanity per reserve: a price of zero, or one far older than its own
-  // max age, makes every position in that reserve unusable.
-  //
-  // Only reserves a liquidator could actually touch are checked. A retired
-  // reserve legitimately has a dead oracle: on the Main Market, CHAI, STEP,
-  // xSTEP and the old kSOL LP reserves all point at Scope index 3, which reads
-  // exactly 0.000001 USD — Kamino's "this asset is retired" marker.
-  //
-  // Retired means either status != active, or usable as neither collateral
-  // (liquidationThresholdPct = 0) nor debt (borrowLimit = 0). Note that a
-  // debt-only reserve has liquidationThresholdPct = 0 with a real borrow limit,
-  // and its oracle very much does matter — hence both conditions.
+  // Retired reserves legitimately have dead oracles, so they are skipped. Both
+  // conditions are needed: a debt-only reserve has liquidationThresholdPct = 0
+  // with a real borrow limit, and its oracle very much does matter.
   const feedCache = new Map<string, Buffer | null>();
   const oracleProblems: string[] = [];
   for (const r of reserves) {
@@ -179,7 +155,8 @@ async function main() {
     if (!feedCache.has(feedKey)) feedCache.set(feedKey, await data(address(feedKey)));
     const feed = feedCache.get(feedKey);
     if (!feed) continue;
-    const { price, ageSeconds } = scopePrice(feed, idx);
+    const { price, unixTimestamp } = scopePrice(feed, idx);
+    const ageSeconds = Math.floor(Date.now() / 1000) - Number(unixTimestamp);
     const maxAge = Number(cf.tokenInfo.maxAgePriceSeconds);
     if (price <= 0 || price < 1e-4) oracleProblems.push(`${symbolOf(r)} idx ${idx} = ${price} USD`);
     else if (ageSeconds > maxAge) oracleProblems.push(`${symbolOf(r)} price ${ageSeconds}s old (limit ${maxAge}s)`);
@@ -198,20 +175,21 @@ async function main() {
     .sort((a, b) => Number(b.state.liquidity.totalAvailableAmount) - Number(a.state.liquidity.totalAvailableAmount))
     .slice(0, IS_TARGET ? reserves.length : 12);
   console.log('reserves (by available liquidity)');
-  console.log('  symbol      ltv  liqThr  bonus bps   available        borrowed');
-  for (const r of shown) {
-    const c = r.state.config;
-    const dec = 10 ** Number(r.state.liquidity.mintDecimals);
-    const avail = Number(r.state.liquidity.totalAvailableAmount) / dec;
-    const borrowed = Number(r.state.liquidity.borrowedAmountSf) / 2 ** 60 / dec;
-    console.log(
-      `  ${symbolOf(r).padEnd(10)} ${String(c.loanToValuePct).padStart(4)} ${String(c.liquidationThresholdPct).padStart(7)}` +
-        `   ${String(c.minLiquidationBonusBps).padStart(4)}-${String(c.maxLiquidationBonusBps).padEnd(4)}` +
-        ` ${avail.toFixed(2).padStart(15)} ${borrowed.toFixed(2).padStart(15)}`,
-    );
-  }
-  if (shown.length < reserves.length) console.log(`  … and ${reserves.length - shown.length} more`);
-  console.log();
+  console.table(
+    shown.map((r) => {
+      const c = r.state.config;
+      const dec = 10 ** Number(r.state.liquidity.mintDecimals);
+      return {
+        symbol: symbolOf(r),
+        ltv: c.loanToValuePct,
+        liqThr: c.liquidationThresholdPct,
+        bonusBps: `${c.minLiquidationBonusBps}-${c.maxLiquidationBonusBps}`,
+        available: (Number(r.state.liquidity.totalAvailableAmount) / dec).toFixed(2),
+        borrowed: (Number(r.state.liquidity.borrowedAmountSf) / 2 ** 60 / dec).toFixed(2),
+      };
+    }),
+  );
+  if (shown.length < reserves.length) console.log(`… and ${reserves.length - shown.length} more`);
 
   // ── 3. the configured pair (target market only) ──────────────────────────
   if (IS_TARGET) {
@@ -239,37 +217,23 @@ async function main() {
   }
 
   // ── 4. positions to liquidate ────────────────────────────────────────────
-  const obs = await rpc
-    .getProgramAccounts(KLEND_PROGRAM, {
-      encoding: 'base64',
-      dataSlice: { offset: 0, length: 0 },
-      filters: [
-        { dataSize: BigInt(OBLIGATION_ACCOUNT_SIZE) },
-        { memcmp: { offset: BigInt(OBLIGATION_OFFSETS.lendingMarket), bytes: MARKET as never, encoding: 'base58' } },
-      ],
-    })
-    .send();
-  const nObs = (obs as unknown as unknown[]).length;
-  add(nObs > 0, true, 'the market has open positions', `${nObs} obligations`);
-
-  if (nObs > 0) {
-    const rows = await scanObligationHealth(rpc, MARKET, KLEND_PROGRAM, { minDebtUsd: 10 });
-    const over = rows.filter((r) => r.healthRatio >= 1);
-    add(
-      rows.length > 0,
-      false,
-      'positions with meaningful debt',
-      `${rows.length} with debt >= $10, ${over.length} above threshold`,
-    );
-    if (over.length > 0) {
-      console.log('liquidation candidates (last saved state, not current prices)');
-      for (const r of over.slice(0, 5)) {
-        console.log(
-          `  ${r.obligation}  ${(r.healthRatio * 100).toFixed(1)}% of threshold  $${sfToUsd(r.debtValueSf).toFixed(2)} debt`,
-        );
-      }
-      console.log();
+  const { total, rows } = await scanObligationHealth(rpc, MARKET, KLEND_PROGRAM, { minDebtUsd: 10 });
+  const over = rows.filter((r) => r.healthRatio >= 1);
+  add(total > 0, true, 'the market has open positions', `${total} obligations`);
+  add(
+    rows.length > 0,
+    false,
+    'positions with meaningful debt',
+    `${rows.length} with debt >= $10, ${over.length} above threshold`,
+  );
+  if (over.length > 0) {
+    console.log('liquidation candidates (last saved state, not current prices)');
+    for (const r of over.slice(0, 5)) {
+      console.log(
+        `  ${r.obligation}  ${(r.healthRatio * 100).toFixed(1)}% of threshold  $${sfToUsd(r.debtValueSf).toFixed(2)} debt`,
+      );
     }
+    console.log();
   }
 
   // ── 5. the flash loan source ─────────────────────────────────────────────

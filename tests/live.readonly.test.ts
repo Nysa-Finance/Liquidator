@@ -15,11 +15,12 @@ import {
   OBLIGATION_ACCOUNT_SIZE,
   OBLIGATION_OFFSETS,
   scanObligationHealth,
+  scopePrice,
   sfToUsd,
   type HealthRow,
 } from '../src/scanner.js';
 import { loadOrcaContext, quoteUsdyToUsdc, spotPrice } from '../src/build/orca.js';
-import { createReadOnlyRpc, LIVE_MARKET, LIVE_RPC, WriteAttemptError } from './readonly-rpc.js';
+import { createReadOnlyRpc, WriteAttemptError } from '../src/readonly.js';
 
 /**
  * READ-ONLY tests against real mainnet.
@@ -33,8 +34,8 @@ import { createReadOnlyRpc, LIVE_MARKET, LIVE_RPC, WriteAttemptError } from './r
  *   RPC=https://... LIVE_MARKET=<pubkey> npm run test:live
  */
 
-const rpc = createReadOnlyRpc(LIVE_RPC);
-const market = address(LIVE_MARKET);
+const rpc = createReadOnlyRpc(process.env.RPC ?? process.env.RPC_PRIMARY ?? 'https://api.mainnet-beta.solana.com');
+const market = address(process.env.LIVE_MARKET ?? '7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF');
 
 const u128 = (b: Buffer, o: number) => b.readBigUInt64LE(o) | (b.readBigUInt64LE(o + 8) << 64n);
 
@@ -103,7 +104,7 @@ test('the prefilter offsets match the official decoder', async () => {
 
 test('health prefilter across every obligation of the active market', async (t) => {
   const t0 = Date.now();
-  const rows = await scanObligationHealth(rpc, market);
+  const { rows } = await scanObligationHealth(rpc, market);
   const ms = Date.now() - t0;
 
   assert.ok(rows.length > 0, 'no obligation carries debt');
@@ -138,16 +139,17 @@ test('health prefilter across every obligation of the active market', async (t) 
 });
 
 test('the top candidates decode and the numbers add up', async () => {
-  const rows = (await scanObligationHealth(rpc, market, KLEND_PROGRAM, { minDebtUsd: 100 })).slice(0, 10);
+  const { rows } = await scanObligationHealth(rpc, market, KLEND_PROGRAM, { minDebtUsd: 100 });
+  const top = rows.slice(0, 10);
   const accs = await rpc
-    .getMultipleAccounts(rows.map((r) => r.obligation), { encoding: 'base64' })
+    .getMultipleAccounts(top.map((r) => r.obligation), { encoding: 'base64' })
     .send();
 
   let verified = 0;
   for (const [i, acc] of accs.value.entries()) {
     if (!acc) continue;
     const o = Obligation.decode(Buffer.from((acc.data as [string, string])[0], 'base64'));
-    const row = rows[i]!;
+    const row = top[i]!;
 
     const dv = Number(o.depositedValueSf.toString());
     const bf = Number(o.borrowFactorAdjustedDebtValueSf.toString());
@@ -221,9 +223,8 @@ test('live Orca quote and oracle divergence check', async () => {
   assert.ok(avg <= spot, 'the average price cannot exceed spot when selling A→B');
 
   // The price Kamino would use for USDY: Scope index 3 on the market's feed.
-  const scope = await accountData(TARGET_MARKET.scopePrices);
-  const off = 8 + 32 + 3 * 56;
-  const scopeUsdy = Number(scope.readBigUInt64LE(off)) / 10 ** Number(scope.readBigUInt64LE(off + 8));
+  // index 3 is the Scope entry the USDY reserve is configured to read
+  const scopeUsdy = scopePrice(await accountData(TARGET_MARKET.scopePrices), 3).price;
   const rho = spot / scopeUsdy;
   console.log(`    Scope price (index 3) = ${scopeUsdy}  →  ρ = ${rho.toExponential(3)}`);
 

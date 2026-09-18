@@ -70,13 +70,6 @@ npm install
 cp .env.example .env    # fill in RPC_PRIMARY and KEYPAIR_PATH
 ```
 
-Check that on-chain parameters still match what is hardcoded in `src/config.ts`
-(read-only, no key needed):
-
-```bash
-npm run inspect
-```
-
 Real USDY -> USDC quote on the exit pool, to calibrate slippage:
 
 ```bash
@@ -169,7 +162,6 @@ tests/
   *.test.ts             refresh / flash loan / swap / live read-only
 scripts/
   preflight.ts          production readiness check
-  inspect-market.mjs    prints the real state of a market
   quote-orca.ts         real quote on the exit pool
   dump-fixtures.mjs     downloads programs and accounts for the local world
 ```

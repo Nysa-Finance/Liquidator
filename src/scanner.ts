@@ -23,6 +23,32 @@ import { KLEND_PROGRAM } from './config.js';
 /** OBLIGATION_SIZE (3336) + 8 bytes of Anchor discriminator. */
 export const OBLIGATION_ACCOUNT_SIZE = 3344;
 
+/** RESERVE_SIZE (8616) + 8 bytes of Anchor discriminator. */
+export const RESERVE_ACCOUNT_SIZE = 8624;
+
+/**
+ * One entry of a Scope `OraclePrices` account.
+ * Layout: disc(8) + oracle_mappings: Pubkey(32) + prices: [DatedPrice; 512],
+ * where DatedPrice = value u64 | exp u64 | last_updated_slot u64 |
+ * unix_timestamp u64 | [u8; 24], 56 bytes each.
+ *
+ * klend reads this account directly, with no CPI into Scope, so these bytes are
+ * exactly what a reserve refresh will consume.
+ */
+export function scopePrice(feed: Buffer, index: number) {
+  const o = 40 + index * 56;
+  const value = feed.readBigUInt64LE(o);
+  const exp = feed.readBigUInt64LE(o + 8);
+  return {
+    value,
+    exp,
+    slot: feed.readBigUInt64LE(o + 16),
+    unixTimestamp: feed.readBigUInt64LE(o + 24),
+    price: Number(value) / 10 ** Number(exp),
+    offset: o,
+  };
+}
+
 /**
  * Field offsets inside the account, discriminator included.
  * Derived empirically and re-verified by `tests/live.readonly.test.ts` against
@@ -43,6 +69,8 @@ export const HEALTH_WINDOW = {
   offset: OBLIGATION_OFFSETS.borrowFactorAdjustedDebtValueSf,
   length: 64,
 } as const;
+
+export type HealthScan = { total: number; rows: HealthRow[] };
 
 export type HealthRow = {
   obligation: Address;
@@ -107,7 +135,7 @@ export async function scanObligationHealth(
   market: Address,
   programId: Address = KLEND_PROGRAM,
   opts: ScanOptions = {},
-): Promise<HealthRow[]> {
+): Promise<HealthScan> {
   const res = await rpc
     .getProgramAccounts(programId, {
       encoding: 'base64',
@@ -136,5 +164,5 @@ export async function scanObligationHealth(
     rows.push(row);
   }
   rows.sort((x, y) => y.healthRatio - x.healthRatio);
-  return rows;
+  return { total: accounts.length, rows };
 }

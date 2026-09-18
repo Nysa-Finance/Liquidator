@@ -1,11 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { LiteSVM, Clock } from 'litesvm';
-import {
-  address,
-  getAddressCodec,
-  type Address,
-  type KeyPairSigner,
-} from '@solana/kit';
+import { address, getAddressCodec, type Address } from '@solana/kit';
+import { scopePrice } from '../src/scanner.js';
 
 /**
  * Local world: LiteSVM loaded with the real mainnet programs and state pulled by
@@ -74,39 +70,20 @@ export function setClock(world: World, slot: bigint, unixTimestamp: bigint): voi
   world.unixTimestamp = unixTimestamp;
 }
 
-/** Advances the world by `slots` slots (~400 ms each). */
-export function advance(world: World, slots: bigint): void {
-  setClock(world, world.slot + slots, world.unixTimestamp + (slots * 4n) / 10n);
-}
-
 // ── Scope ───────────────────────────────────────────────────────────────────
-// OraclePrices = discriminator(8) + oracle_mappings: Pubkey(32) + prices: [DatedPrice; 512]
-// DatedPrice   = { value: u64, exp: u64, last_updated_slot: u64, unix_timestamp: u64,
-//                  generic_data: [u8; 24] }   →  56 bytes
-// klend reads this account DIRECTLY (no CPI into Scope): it only checks that the
-// address matches reserve.config.tokenInfo.scopeConfiguration.priceFeed.
-// Rewriting these bytes is therefore how prices are moved in the local world.
-const SCOPE_PREFIX = 8 + 32;
-const DATED_PRICE_SIZE = 56;
+// klend reads the OraclePrices account DIRECTLY (no CPI into Scope): it only
+// checks that the address matches the reserve's configured priceFeed. Rewriting
+// these bytes is therefore how prices are moved in the local world.
+// The entry layout lives in src/scanner.ts.
 
-export function scopeEntryOffset(index: number): number {
-  return SCOPE_PREFIX + index * DATED_PRICE_SIZE;
+function feedBytes(world: World, feed: Address): Buffer {
+  const acc = world.svm.getAccount(feed);
+  if (!acc || !('data' in acc) || !acc.data) throw new Error(`Scope feed ${feed} missing`);
+  return Buffer.from(acc.data as Uint8Array);
 }
 
 export function readScopePrice(world: World, feed: Address, index: number) {
-  const acc = world.svm.getAccount(feed);
-  if (!acc || !('data' in acc) || !acc.data) throw new Error(`Scope feed ${feed} missing`);
-  const b = Buffer.from(acc.data as Uint8Array);
-  const o = scopeEntryOffset(index);
-  const value = b.readBigUInt64LE(o);
-  const exp = b.readBigUInt64LE(o + 8);
-  return {
-    value,
-    exp,
-    lastUpdatedSlot: b.readBigUInt64LE(o + 16),
-    unixTimestamp: b.readBigUInt64LE(o + 24),
-    price: Number(value) / 10 ** Number(exp),
-  };
+  return scopePrice(feedBytes(world, feed), index);
 }
 
 /**
@@ -114,10 +91,9 @@ export function readScopePrice(world: World, feed: Address, index: number) {
  * so that `max_age_price_seconds` is satisfied.
  */
 export function setScopePrice(world: World, feed: Address, index: number, price: number, exp = 8): void {
-  const acc = world.svm.getAccount(feed);
-  if (!acc || !('data' in acc) || !acc.data) throw new Error(`Scope feed ${feed} missing`);
-  const b = Buffer.from(acc.data as Uint8Array);
-  const o = scopeEntryOffset(index);
+  const acc = world.svm.getAccount(feed)!;
+  const b = feedBytes(world, feed);
+  const o = scopePrice(b, index).offset;
   b.writeBigUInt64LE(BigInt(Math.round(price * 10 ** exp)), o);
   b.writeBigUInt64LE(BigInt(exp), o + 8);
   b.writeBigUInt64LE(world.slot, o + 16);
@@ -130,12 +106,6 @@ export function setScopePrice(world: World, feed: Address, index: number, price:
     executable: false,
     space: BigInt(b.length),
   } as never);
-}
-
-/** Re-stamps an existing price without changing its value (to age or refresh it). */
-export function touchScopePrice(world: World, feed: Address, index: number): void {
-  const cur = readScopePrice(world, feed, index);
-  setScopePrice(world, feed, index, cur.price, Number(cur.exp));
 }
 
 // ── Forged token accounts ───────────────────────────────────────────────────
@@ -174,8 +144,4 @@ export function readTokenAmount(world: World, ata: Address): bigint {
   const acc = world.svm.getAccount(ata);
   if (!acc || !('data' in acc) || !acc.data) return 0n;
   return Buffer.from(acc.data as Uint8Array).readBigUInt64LE(64);
-}
-
-export async function fundSigner(world: World, signer: KeyPairSigner, sol = 10): Promise<void> {
-  world.svm.airdrop(signer.address, BigInt(Math.round(sol * 1e9)) as never);
 }

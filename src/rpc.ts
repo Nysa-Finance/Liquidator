@@ -1,6 +1,5 @@
 import {
   createSolanaRpc,
-  createSolanaRpcSubscriptions,
   createKeyPairSignerFromBytes,
   type Rpc,
   type SolanaRpcApi,
@@ -52,11 +51,6 @@ export class RpcPool {
 
 export function makeRpcPool(): RpcPool {
   return new RpcPool([CFG.rpcPrimary, CFG.rpcSecondary]);
-}
-
-export function makeSubscriptions() {
-  if (!CFG.wsPrimary) return null;
-  return createSolanaRpcSubscriptions(CFG.wsPrimary as `wss://${string}`);
 }
 
 export async function loadSigner(): Promise<KeyPairSigner> {

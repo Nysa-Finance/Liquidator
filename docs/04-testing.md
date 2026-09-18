@@ -4,7 +4,7 @@ Five tiers, from safest to most exposed. The first three are implemented.
 
 | # | Environment | Risk | What it validates | Status |
 |---|---|---|---|---|
-| 0 | Read-only scripts | none | on-chain config, Orca quotes | `npm run inspect`, `npm run quote`, `npm run preflight` |
+| 0 | Read-only scripts | none | on-chain config, Orca quotes | `npm run preflight`, `npm run quote` |
 | 1 | **Live read-only tests** | none | scanner and constants against real active markets | `npm run test:live` |
 | 2 | **Local mainnet fork (LiteSVM)** | none | real programs, real state, instructions, CU | `npm test` |
 | 3 | `solana-test-validator --clone` | none | tier 2 plus the bot's RPC code path | not built |
