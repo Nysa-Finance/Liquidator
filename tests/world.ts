@@ -1,7 +1,9 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { LiteSVM, Clock } from 'litesvm';
 import { address, getAddressCodec, type Address } from '@solana/kit';
+import { lendingMarketAuthPda } from '@kamino-finance/klend-sdk';
 import { scopePrice } from '../src/scanner.js';
+import { KLEND_PROGRAM, TARGET_MARKET } from '../src/config.js';
 
 /**
  * Local world: LiteSVM loaded with the real mainnet programs and state pulled by
@@ -27,6 +29,8 @@ export type World = {
   /** current slot and timestamp of the simulated world */
   slot: bigint;
   unixTimestamp: bigint;
+  /** PDA that signs the target market's vault transfers */
+  marketAuthority: Address;
 };
 
 export async function loadWorld(opts: { sigverify?: boolean } = {}): Promise<World> {
@@ -52,11 +56,13 @@ export async function loadWorld(opts: { sigverify?: boolean } = {}): Promise<Wor
     } as never);
   }
 
+  const [marketAuthority] = await lendingMarketAuthPda(TARGET_MARKET.address, KLEND_PROGRAM);
   const world: World = {
     svm,
     manifest,
     slot: BigInt(manifest.slot),
     unixTimestamp: BigInt(manifest.blockTime),
+    marketAuthority,
   };
   setClock(world, world.slot, world.unixTimestamp);
   return world;

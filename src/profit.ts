@@ -67,12 +67,25 @@ export function buildPlan(args: {
 
   // ── 1. how much can be repaid ─────────────────────────────────────────
   const debtLamports = borrow.amount; // base units USDC
-  const maxByCloseFactor = debtLamports.mul(eligibility.closeFactor);
-  const maxByMarketCap = new Decimal(
-    args.market.state.maxLiquidatableDebtMarketValueAtOnce.toString(),
-  ).div(pxDebt).mul(10 ** USDC_RESERVE.decimals);
+  const debtValueUsd = debtLamports.div(10 ** USDC_RESERVE.decimals).mul(pxDebt);
 
-  let repay = Decimal.min(maxByCloseFactor, maxByMarketCap).floor();
+  // Below min_full_liquidation_value_threshold the program refuses a partial
+  // repayment: calculate_liquidation returns RepayTooSmallForFullLiquidation
+  // unless the whole debt is covered. Close factor and market cap do not apply.
+  const mustRepayInFull = debtValueUsd.lt(
+    args.market.state.minFullLiquidationValueThreshold.toString(),
+  );
+
+  let repay: Decimal;
+  if (mustRepayInFull) {
+    repay = debtLamports.ceil();
+  } else {
+    const maxByCloseFactor = debtLamports.mul(eligibility.closeFactor);
+    const maxByMarketCap = new Decimal(
+      args.market.state.maxLiquidatableDebtMarketValueAtOnce.toString(),
+    ).div(pxDebt).mul(10 ** USDC_RESERVE.decimals);
+    repay = Decimal.min(maxByCloseFactor, maxByMarketCap).floor();
+  }
   if (repay.lte(0)) return { ok: false, reason: 'dust' };
 
   // ── 2. collateral received ────────────────────────────────────────────
@@ -82,6 +95,11 @@ export function buildPlan(args: {
 
   // cap at the collateral actually deposited
   const depositLamports = deposit.amount;
+  if (usdyGross.gt(depositLamports) && mustRepayInFull) {
+    // the seized amount is fixed by the forced full repayment; if the deposit
+    // cannot cover it the position is underwater and not worth taking
+    return { ok: false, reason: 'dust' };
+  }
   if (usdyGross.gt(depositLamports)) {
     usdyGross = depositLamports;
     repay = depositLamports

@@ -1,8 +1,9 @@
 import { address, type Address } from '@solana/kit';
 
 /**
- * Constants VERIFIED on-chain / against program source at slot ~446,813,000
- * (2026-09-13). Every value here was read, not assumed. See docs/01-protocol.md.
+ * Constants VERIFIED on-chain / against program source, last re-read at slot
+ * ~448,090,000 (2026-09-18). Every value here was read, not assumed.
+ * See docs/01-protocol.md.
  *
  * WARNING: the risk parameters (bonus, close factor, fees) are mirrored here
  * ONLY as a sanity check. At runtime always re-read them from the on-chain
@@ -16,17 +17,18 @@ export const MEMO_PROGRAM = address('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr
 export const SYSVAR_INSTRUCTIONS = address('Sysvar1nstructions1111111111111111111111111');
 export const FARMS_PROGRAM = address('FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr');
 
-// ── Target market: "Nysa First Trial" ──────────────────────────────────────
+// ── Target market: "USDY Ondo Market" ──────────────────────────────────────
 export const TARGET_MARKET = {
   address: address('F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy'),
-  name: 'Nysa First Trial',
+  name: 'USDY Ondo Market',
   owner: address('66pW72Fchnr34FGgXrxheGs3BbUsDSwJmGcK7m8Bz1Yv'),
   scopePrices: address('3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C'),
   // parameters read on-chain, used as a sanity check against runtime state
-  liquidationMaxDebtCloseFactorPct: 20,
-  maxLiquidatableDebtMarketValueAtOnce: 500_000,
-  minFullLiquidationValueThreshold: 2,
-  insolvencyRiskUnhealthyLtvPct: 95,
+  liquidationMaxDebtCloseFactorPct: 25,
+  maxLiquidatableDebtMarketValueAtOnce: 30_000,
+  /** Below this debt value in USD the program demands a FULL repayment. */
+  minFullLiquidationValueThreshold: 100,
+  insolvencyRiskUnhealthyLtvPct: 97,
   isPermissioned: false, // permissioningAuthority == 11111111111111111111111111111111
 } as const;
 
@@ -41,8 +43,8 @@ export const USDY_RESERVE = {
   feeVault: address('RAZFwzfLEZMzG9toay62VPH5WdUgq8GUhJEdjqzb2yS'),
   collateralMint: address('C7dKsFYaM2DcVJSDjouPTfLc9292Lkd5ti9VQCdx2UDg'),
   collateralSupplyVault: address('AdF4ybj8neZkqoiyxFLkkieRHMboJkDqc1BZGG6SDPhx'),
-  loanToValuePct: 70,
-  liquidationThresholdPct: 75,
+  loanToValuePct: 92,
+  liquidationThresholdPct: 95,
   minLiquidationBonusBps: 200,
   maxLiquidationBonusBps: 500,
   protocolLiquidationFeePct: 0,

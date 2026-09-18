@@ -213,6 +213,21 @@ async function main() {
         'USDY vault and cToken mint unchanged',
         'match src/config.ts',
       );
+      // liquidateV2 passes both farm account pairs as none(). That is only
+      // correct while the withdraw reserve has no collateral farm and the repay
+      // reserve has no debt farm — the curator has already attached a farm to
+      // the USDC reserve's collateral side, so this is not hypothetical.
+      const NONE = '11111111111111111111111111111111';
+      const farms = [
+        String(usdy.state.farmCollateral) !== NONE ? 'USDY collateral farm' : '',
+        String(usdc.state.farmDebt) !== NONE ? 'USDC debt farm' : '',
+      ].filter(Boolean);
+      add(
+        farms.length === 0,
+        true,
+        'no farm accounts the builder omits',
+        farms.length === 0 ? 'none set' : `${farms.join(', ')} set — liquidateV2 would revert`,
+      );
     }
   }
 

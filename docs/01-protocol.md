@@ -162,7 +162,8 @@ accepted.
 ## 6. Target market: findings
 
 Market `F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy` — on-chain name
-**"Nysa First Trial"**, owner `66pW72Fchnr34FGgXrxheGs3BbUsDSwJmGcK7m8Bz1Yv`.
+**"USDY Ondo Market"** (renamed from "Nysa First Trial" between 13 and 18 Sep
+2026), owner `66pW72Fchnr34FGgXrxheGs3BbUsDSwJmGcK7m8Bz1Yv`.
 
 ### 6.1 The market is empty [V]
 
@@ -239,22 +240,38 @@ USDY reserve `rpTGWR3JDjjPfXLCg5Fx1GpSdUxPt1pxW7fwXGUT6js`:
 
 | Parameter | Value |
 |---|---|
-| `loan_to_value_pct` | 70 |
-| `liquidation_threshold_pct` | 75 |
+| `loan_to_value_pct` | 92 |
+| `liquidation_threshold_pct` | **95** |
 | `min_liquidation_bonus_bps` | **200** |
 | `max_liquidation_bonus_bps` | **500** |
 | `bad_debt_liquidation_bonus_bps` | 10 |
 | `protocol_liquidation_fee_pct` | **0** |
 | `borrow_factor_pct` | 100 |
 | `borrow_limit` | 0 (collateral-only) |
-| `deposit_limit` | 1,000 USDY |
+| `deposit_limit` | 250,000 USDY |
 
-Market: `liquidation_max_debt_close_factor_pct = 20`,
-`max_liquidatable_debt_market_value_at_once = 500000` USD,
-`min_full_liquidation_value_threshold = 2` USD,
-`insolvency_risk_unhealthy_ltv_pct = 95`,
+Market: `liquidation_max_debt_close_factor_pct = 25`,
+`max_liquidatable_debt_market_value_at_once = 30000` USD,
+`min_full_liquidation_value_threshold = 100` USD,
+`insolvency_risk_unhealthy_ltv_pct = 97`,
 `permissioning_authority = 11111111111111111111111111111111` -> **permissionless
 liquidation**.
+
+Two of those bite in ways the earlier configuration did not:
+
+- **$30,000 cap per liquidation** (was $500,000) is now a real ceiling on size.
+- **Below $100 of debt the program demands a FULL repayment**: `calculate_liquidation`
+  returns `RepayTooSmallForFullLiquidation` if you offer a partial amount, and
+  neither the close factor nor the market cap applies. `src/profit.ts` sizes for
+  this case explicitly.
+
+The USDC reserve has also acquired a **collateral farm**
+(`farm_collateral = EfsknvSqpqkbSVMmKosmeT5Hn32P5mmC4BEz36ybgVbP`). It does not
+affect this route — `liquidateV2` reads the *withdraw* reserve's collateral farm
+and the *repay* reserve's debt farm, both still unset — but it means the curator
+is attaching farms, and the moment one lands on either of those two fields the
+builder's `none()` farm accounts would make the instruction revert.
+`npm run preflight` now asserts both are still unset.
 
 ### 6.6 The Orca exit route [V]
 

@@ -33,6 +33,15 @@ jobs:
           RPC: ${{ secrets.SOLANA_RPC || 'https://api.mainnet-beta.solana.com' }}
         run: npm run report -- --live
 
+      # Red until the curator finishes configuring the market, so it reports
+      # rather than fails: a broken build and a market that is not open yet are
+      # different problems.
+      - name: Market readiness
+        continue-on-error: true
+        env:
+          RPC: ${{ secrets.SOLANA_RPC || 'https://api.mainnet-beta.solana.com' }}
+        run: npm run test:ready
+
       - name: Publish report
         if: always()
         uses: actions/upload-artifact@v4

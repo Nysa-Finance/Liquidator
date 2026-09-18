@@ -9,11 +9,12 @@
     "start": "tsx --env-file-if-exists=.env src/index.ts",
     "quote": "tsx scripts/quote-orca.ts",
     "fixtures": "node scripts/dump-fixtures.mjs",
-    "test": "tsx --test tests/refresh.test.ts tests/flashloan.test.ts tests/swap.test.ts",
+    "test": "tsx --test tests/refresh.test.ts tests/flashloan.test.ts tests/swap.test.ts tests/liquidation.test.ts",
     "test:live": "tsx --test tests/live.readonly.test.ts",
-    "test:all": "tsx --test tests/*.test.ts",
+    "test:all": "tsx --test tests/refresh.test.ts tests/flashloan.test.ts tests/swap.test.ts tests/liquidation.test.ts tests/live.readonly.test.ts",
     "preflight": "tsx --env-file-if-exists=.env scripts/preflight.ts",
-    "report": "tsx scripts/test-report.ts"
+    "report": "tsx scripts/test-report.ts",
+    "test:ready": "tsx --test tests/market-ready.test.ts"
   },
   "type": "module",
   "devDependencies": {

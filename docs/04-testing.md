@@ -6,7 +6,8 @@ Five tiers, from safest to most exposed. The first three are implemented.
 |---|---|---|---|---|
 | 0 | Read-only scripts | none | on-chain config, Orca quotes | `npm run preflight`, `npm run quote` |
 | 1 | **Live read-only tests** | none | scanner and constants against real active markets | `npm run test:live` |
-| 2 | **Local mainnet fork (LiteSVM)** | none | real programs, real state, instructions, CU | `npm test` |
+| 2 | **Local mainnet fork (LiteSVM)** | none | real programs, real state, **the full liquidation**, CU | `npm test` |
+| 2b | **Market readiness gate** | none | whether the target market is open for business | `npm run test:ready` |
 | 3 | `solana-test-validator --clone` | none | tier 2 plus the bot's RPC code path | not built |
 | 4 | Mainnet in `DRY_RUN` | none | `simulateTransaction` on real state | default of the bot |
 | 5 | Mainnet for real, minimum size | real | everything | last step |
@@ -144,13 +145,41 @@ market**: push the collateral price down until LTV crosses the threshold.
 
 ```
 the local world loads mainnet programs and state
-the market Scope feed prices USDY at ~1e-6
 refreshReserve applies the Scope prices we write ourselves
 flash borrow + flash repay: the pair passes the introspection checks
 a wrong borrow_instruction_index makes the transaction revert
 without a flash repay the borrow reverts
 swapV2 USDY->USDC: real execution, and the quote agrees
+a borrowed position can be opened, pushed underwater, and liquidated at a profit
 ```
+
+The last one is the production path end to end. A lender supplies USDC, a
+borrower deposits USDY and borrows against it — both through klend's own
+instructions, so the state under test is one the protocol produced, not forged
+bytes. The USDY oracle then drops from 1.1435 to 1.04, the position crosses its
+95% threshold, and the bot's own `buildLiquidationMessage` runs against it:
+
+```
+repaid 5000 USDC, seized ~4658.65 USDY, profit 318.62 USDC, residue 245.19 USDY, CU 238125
+LTV 87.45% -> 96.15% (threshold 95.00%) -> 95.54% after liquidation
+```
+
+**238,125 CU** is the measured cost of the whole nine-instruction transaction —
+the number to size `setComputeUnitLimit` from.
+
+Two things this test settled that were previously assumptions:
+
+- The **profit figure is not a margin estimate.** The local Orca pool still
+  prices USDY at 1.1435 while the oracle was pushed to 1.04, so the exit is
+  deliberately generous. The test asserts the sign, not the size; the realistic
+  margin is in [03-profitability.md](03-profitability.md).
+- A **USDY residue is expected, and is the safe side of a trade-off.** The same
+  number guards the liquidation (`min_acceptable_received_liquidity_amount`) and
+  sizes the swap, so klend guarantees at least that much arrives and the swap
+  spends exactly that much. The swap can therefore never run short and revert
+  the whole transaction; the cost is that anything delivered above the floor
+  stays behind. That is the right way round — a stranded 245 USDY is swept by
+  the next liquidation, a reverted transaction is a burned fee.
 
 Measured, not estimated:
 
@@ -165,24 +194,55 @@ The two negative flash-loan tests are worth as much as the positive one: they
 prove that a `borrowInstructionIndex` off by **one** fails the whole transaction.
 That is the easiest mistake to introduce when reordering instructions.
 
-### The missing piece: building a liquidatable position
+### How the position is built
 
-The tests cover both ends of the transaction (flash loan, swap) but not yet the
-liquidation, which needs an obligation carrying debt. In the local world:
+`tests/setup-position.ts` does it with klend's own instructions rather than
+forged bytes, so every invariant the program maintains stays true:
 
-1. forge the victim's token accounts with USDY (`forgeTokenAccount`);
-2. `initUserMetadata` + `initObligation` +
-   `depositReserveLiquidityAndObligationCollateralV2` (USDY) +
-   `borrowObligationLiquidityV2` (USDC) — all builders exist in the SDK;
-3. the Nysa USDC reserve holds only 0.1 USDC: either raise liquidity by forging
-   the supply vault **and** rewriting `liquidity.total_available_amount` in the
-   reserve, or point the fixtures at another market;
-4. `setScopePrice(feed, USDY_index, crashed_price)` until LTV > 75%;
-5. run the bot's own transaction (`buildLiquidationMessage`) and check the USDC delta.
+1. a lender forges USDC and calls `depositReserveLiquidity` — this is what makes
+   the reserve borrowable, without touching `liquidity.total_available_amount`
+   by hand;
+2. a borrower forges USDY, then `initUserMetadata` + `initObligation` +
+   `depositReserveLiquidityAndObligationCollateralV2` + `borrowObligationLiquidityV2`;
+3. `refreshPosition` recomputes the aggregates — deposits and borrows alone
+   leave them stale, so reading LTV without it returns the state before the
+   operation.
 
-Step 3 is the annoying one: editing a field of a `zero_copy` struct requires the
-exact offset. The cleaner alternative is to point the fixtures at an active
-Kamino market (`MARKET=... npm run fixtures`), where the liquidity already exists.
+The borrower's own USDY deposit is what gives the reserve the liquidity to
+redeem against later, so no vault forging is needed anywhere.
+
+---
+
+---
+
+## Tier 2b — The market readiness gate
+
+```bash
+npm run test:ready
+```
+
+Every other suite asserts that **our code** is correct and stays green whatever
+the market is doing. This one asserts that **the market** is open for business,
+and it is red until the curator finishes configuring it.
+
+Keeping the two apart is the point: a red run here never means a regression in
+the bot, so nobody learns to ignore a failing suite. It is the executable form
+of `npm run preflight`, so it sits outside `npm test` and outside the CI gate —
+the daily canary runs it with `continue-on-error` and reports the result.
+
+```
+✔ the market accepts price-triggered liquidations
+✖ the USDY oracle reports a real price
+    Scope index 3 reads 0.000001 USD — not a USDY price (expected ~1.14).
+    Kamino points retired reserves at index 3; the real USDY price is at index 79.
+✖ the reserves hold enough liquidity to work
+    only 0.10 USDY available to redeem against
+✔ the builder omits no farm account the program now requires
+✖ the oracle price and the exit price agree
+✖ there is something to liquidate
+```
+
+When those four turn green, the market is live and the bot has work to do.
 
 ---
 

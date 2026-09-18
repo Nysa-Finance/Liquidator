@@ -13,7 +13,7 @@ import {
 import { Reserve } from '@kamino-finance/klend-sdk';
 import { TARGET_MARKET, USDC_RESERVE, USDY_RESERVE } from '../src/config.js';
 import { refreshReserveIx } from '../src/build/klend.js';
-import { loadWorld, setScopePrice, readScopePrice, type World } from './world.js';
+import { loadWorld, setScopePrice, type World } from './world.js';
 
 /** Scope indices used by the market's reserves (read from config.tokenInfo.scopeConfiguration). */
 const USDY_SCOPE_INDEX = 3;
@@ -44,14 +44,6 @@ test('the local world loads mainnet programs and state', async () => {
   assert.equal(Object.keys(world.manifest.programs).length, 3);
   const acc = world.svm.getAccount(USDY_RESERVE.address);
   assert.ok(acc && 'data' in acc, 'USDY reserve not loaded');
-});
-
-test('the market Scope feed prices USDY at ~1e-6: the reserve points at a placeholder index', async () => {
-  const world = await loadWorld();
-  const p = readScopePrice(world, TARGET_MARKET.scopePrices, USDY_SCOPE_INDEX);
-  // This is NOT a bot bug: it is the real state of mainnet.
-  // The USDY reserve's scope chain is [3], and index 3 holds 1e-6 USD.
-  assert.ok(p.price < 0.01, `expected a placeholder price, read ${p.price}`);
 });
 
 test('refreshReserve applies the Scope prices we write ourselves', async () => {

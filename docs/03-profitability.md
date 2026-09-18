@@ -6,7 +6,7 @@
 |---|---|---|
 | `D` | total USDC debt of the obligation (base units) | `ObligationLiquidity.borrowed_amount()` |
 | `R` | USDC actually repaid (`repay_amount`) | output of `calculate_liquidation` |
-| `CF` | close factor | `market.liquidation_max_debt_close_factor_pct` = **20%** [V] |
+| `CF` | close factor | `market.liquidation_max_debt_close_factor_pct` = **25%** [V] |
 | `b` | liquidation bonus rate | see §2, **in [0.02, 0.05]** [V] |
 | `P_scope_USDY` | USDY price from Scope, as used by klend | reserve refresh |
 | `W` | gross USDY received | see §3 |
@@ -35,16 +35,36 @@ else:
     b         = min( min_bonus, max_bonus, 1 - ltv_nobf )
 ```
 
-For the USDY/USDC pair on the Nysa market: `min_bps = 200`, `max_bps = 500`, so
-**b starts at 2% and grows toward 5%** as LTV exceeds the threshold. The
-`1 - ltv_nobf` cap binds above 95% LTV.
+For the USDY/USDC pair: `min_bps = 200`, `max_bps = 500`. But with the
+liquidation threshold now at **95%**, the solvency cap `1 - ltv_nobf` binds long
+before the growth term does, and **the 5% ceiling is unreachable**:
+
+| obligation LTV | `max(200bps, ltv - 95%)` | cap `1 - ltv_nobf` | **b** |
+|---|---|---|---|
+| 95% | 200 bps | 500 bps | **2.00%** |
+| 97% | 200 bps | 300 bps | **2.00%** |
+| 98% | 300 bps | 200 bps | **2.00%** |
+| 98.5% | 350 bps | 150 bps | **1.50%** |
+| 99%+ | bad-debt branch | — | `max(10bps, 1 - ltv_nobf)` |
+
+So the premium is a flat **2% between 95% and 98% LTV**, then decays to zero.
+Break-even is `b > 17.6 bps` (see §5), which holds up to roughly **99.8% LTV** —
+profitable but thin at the top of the range.
+
+Practical consequence: **the money is in the 95–98% band.** Above it the premium
+shrinks faster than the exit costs, and the size cap means a single liquidation
+grosses at most `min(25% x debt, $30,000) x 2%` ≈ **$600**.
 
 ## 3. How much collateral you receive
 
 ```
 liquidatable_mv = min( D_mv * CF_effective , max_liquidatable_debt_mv_at_once )
-CF_effective    = 1.00  if ltv > insolvency_risk_unhealthy_ltv (95%)   [V]
-                = 0.20  otherwise
+CF_effective    = 1.00  if ltv > insolvency_risk_unhealthy_ltv (97%)   [V]
+                = 0.25  otherwise
+
+// and, below min_full_liquidation_value_threshold ($100 of debt value),
+// R is forced to the ENTIRE debt: close factor and market cap do not apply,
+// and a partial offer fails with RepayTooSmallForFullLiquidation.
 
 R_max           = D * (liquidatable_mv / D_mv)
 R               = min(R_requested, R_max)
