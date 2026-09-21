@@ -3,6 +3,7 @@ import {
   signTransactionMessageWithSigners,
   type Address,
   type Signature,
+  type TokenBalance,
 } from '@solana/kit';
 import { Decimal } from 'decimal.js';
 import { Reserve } from '@kamino-finance/klend-sdk';
@@ -176,6 +177,110 @@ export async function sendAndConfirm(
 export async function signToWire(message: Parameters<typeof signTransactionMessageWithSigners>[0]) {
   const signed = await signTransactionMessageWithSigners(message);
   return getBase64EncodedWireTransaction(signed);
+}
+
+/** What a confirmed transaction actually did, as the chain recorded it. */
+export type Settlement = {
+  /** real USDC movement on the liquidator's account, base units */
+  usdcDelta: bigint;
+  /** what the transaction actually cost, mandatory fee plus priority fee */
+  feeLamports: bigint;
+};
+
+type Meta = {
+  fee: bigint;
+  preTokenBalances?: readonly TokenBalance[];
+  postTokenBalances?: readonly TokenBalance[];
+};
+
+/**
+ * Pulls the real outcome out of a confirmed transaction's metadata.
+ *
+ * Balances are matched on owner and mint rather than on account index: a v0
+ * transaction compressed with a lookup table resolves its indices through
+ * `loadedAddresses`, and matching by index would silently read the wrong
+ * account. Kept separate from the RPC call so it can be tested on its own.
+ */
+export function settlementFromMeta(meta: Meta | null, owner: Address, mint: Address): Settlement | null {
+  if (!meta) return null;
+  const amount = (balances: readonly TokenBalance[] | undefined) => {
+    const hit = balances?.find((b) => b.owner === owner && b.mint === mint);
+    return hit ? BigInt(hit.uiTokenAmount.amount) : 0n;
+  };
+  return {
+    usdcDelta: amount(meta.postTokenBalances) - amount(meta.preTokenBalances),
+    feeLamports: BigInt(meta.fee),
+  };
+}
+
+/**
+ * Reads back what a confirmed transaction really settled.
+ *
+ * The estimate is what the bot believed before sending; this is what happened.
+ * Without the comparison an optimistic slippage model never shows up, and the
+ * fees burned on transactions that failed are never counted at all.
+ */
+export async function reconcile(
+  rpc: RpcClient,
+  signature: string,
+  owner: Address,
+  mint: Address,
+): Promise<Settlement | null> {
+  // The transaction can take a moment to be queryable after confirmation.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const tx = await rpc
+        .getTransaction(signature as never, {
+          commitment: 'confirmed',
+          maxSupportedTransactionVersion: 0,
+          encoding: 'json',
+        })
+        .send();
+      if (tx) return settlementFromMeta(tx.meta as Meta | null, owner, mint);
+    } catch (e) {
+      log.debug({ signature, err: String(e) }, 'reconcile attempt failed');
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  log.warn({ signature }, 'could not read the confirmed transaction back');
+  return null;
+}
+
+/**
+ * Running total of what the bot actually made and actually spent.
+ *
+ * The number that decides whether this is worth running is confirmed proceeds
+ * minus the fees burned on everything that failed — a run can show a profit on
+ * every single liquidation and still lose money on the ones that did not land.
+ */
+export class Ledger {
+  private usdcEarned = 0n;
+  private lamportsSpent = 0n;
+  private won = 0;
+  private lost = 0;
+
+  win(s: Settlement): void {
+    this.usdcEarned += s.usdcDelta;
+    this.lamportsSpent += s.feeLamports;
+    this.won += 1;
+  }
+
+  /** A transaction that landed with an error still paid its fee. */
+  loss(feeLamports: bigint): void {
+    this.lamportsSpent += feeLamports;
+    this.lost += 1;
+  }
+
+  summary() {
+    const attempts = this.won + this.lost;
+    return {
+      usdcEarned: Number(this.usdcEarned) / 1e6,
+      solSpent: Number(this.lamportsSpent) / 1e9,
+      won: this.won,
+      lost: this.lost,
+      landedRate: attempts === 0 ? 0 : this.won / attempts,
+    };
+  }
 }
 
 /**

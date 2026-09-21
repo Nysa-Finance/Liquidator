@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Decimal } from 'decimal.js';
 import { calculateLiquidationBonus } from '../src/eligibility.js';
 import { buildPlan } from '../src/profit.js';
+import { Ledger, settlementFromMeta } from '../src/execute.js';
 import { validateConfig } from '../src/config.js';
 import { USDC_RESERVE, USDY_RESERVE } from '../src/config.js';
 import { decodeWhirlpoolData, orcaContextFromAccounts } from '../src/build/orca.js';
@@ -216,4 +217,64 @@ test('a haircut that would outgrow the bonus is refused', () => {
     if (saved === undefined) delete process.env.LIQ_SLIPPAGE_BPS;
     else process.env.LIQ_SLIPPAGE_BPS = saved;
   }
+});
+
+// ── settlement accounting ──────────────────────────────────────────────────
+
+test('the settlement is read from owner and mint, not from account order', () => {
+  const owner = 'Liq11111111111111111111111111111111111111' as never;
+  const usdc = USDC_RESERVE.liquidityMint;
+  const other = 'Someone1111111111111111111111111111111111' as never;
+
+  // Deliberately noisy: another wallet's USDC, and our own USDY, both sitting
+  // ahead of the entry that matters. A v0 transaction compressed with a lookup
+  // table resolves account indices through loadedAddresses, so anything keyed
+  // on position would read one of these instead.
+  const settled = settlementFromMeta(
+    {
+      fee: 5_000n,
+      preTokenBalances: [
+        { accountIndex: 0, mint: usdc, owner: other, uiTokenAmount: { amount: '999999' } },
+        { accountIndex: 1, mint: USDY_RESERVE.liquidityMint, owner, uiTokenAmount: { amount: '4000' } },
+        { accountIndex: 2, mint: usdc, owner, uiTokenAmount: { amount: '1000000' } },
+      ],
+      postTokenBalances: [
+        { accountIndex: 0, mint: usdc, owner: other, uiTokenAmount: { amount: '111111' } },
+        { accountIndex: 1, mint: USDY_RESERVE.liquidityMint, owner, uiTokenAmount: { amount: '245192' } },
+        { accountIndex: 2, mint: usdc, owner, uiTokenAmount: { amount: '1318621' } },
+      ],
+    } as never,
+    owner,
+    usdc,
+  );
+
+  assert.ok(settled);
+  assert.equal(settled.usdcDelta, 318_621n, 'the USDC gain on our own account');
+  assert.equal(settled.feeLamports, 5_000n);
+});
+
+test('an account absent from the balances reads as no movement, not as a crash', () => {
+  const settled = settlementFromMeta(
+    { fee: 5_000n, preTokenBalances: [], postTokenBalances: [] } as never,
+    'Liq11111111111111111111111111111111111111' as never,
+    USDC_RESERVE.liquidityMint,
+  );
+  assert.ok(settled);
+  assert.equal(settled.usdcDelta, 0n);
+});
+
+test('the ledger separates what was earned from what was burned losing', () => {
+  const ledger = new Ledger();
+  ledger.win({ usdcDelta: 318_621n, feeLamports: 5_000n });
+  ledger.win({ usdcDelta: 120_000n, feeLamports: 5_000n });
+  ledger.loss(5_000n);
+  ledger.loss(5_000n);
+  ledger.loss(5_000n);
+
+  const s = ledger.summary();
+  assert.equal(s.usdcEarned.toFixed(6), '0.438621');
+  assert.equal(s.solSpent.toFixed(9), '0.000025000', 'every attempt paid, won or lost');
+  assert.equal(s.won, 2);
+  assert.equal(s.lost, 3);
+  assert.equal(s.landedRate.toFixed(2), '0.40', 'the number that says whether this is worth running');
 });

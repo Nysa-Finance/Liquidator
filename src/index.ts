@@ -20,9 +20,11 @@ import { loadPdas } from './build/klend.js';
 import { buildLiquidationMessage, type Atas, type LookupTables } from './build/tx.js';
 import {
   InFlightGuard,
+  Ledger,
   PriorityFeeOracle,
   Quarantine,
   readFlashLiquidity,
+  reconcile,
   sendAndConfirm,
   signToWire,
   simulate,
@@ -51,6 +53,7 @@ async function tick(ctx: {
   guard: InFlightGuard;
   quarantine: Quarantine;
   lookupTables: LookupTables | undefined;
+  ledger: Ledger;
 }): Promise<void> {
   const rpc = ctx.pool.active();
   // slot and blockTime read at the same commitment: one coherent snapshot,
@@ -225,12 +228,49 @@ async function tick(ctx: {
       const finalWire = await signToWire(finalMsg);
 
       const res = await sendAndConfirm(ctx.pool, finalWire, bh2.lastValidBlockHeight);
+
       if (res.landed && res.err === null) {
         ctx.fees.onSuccess();
-        log.info({ signature: res.signature }, 'liquidation confirmed');
+
+        // What the chain recorded, not what the plan predicted. A model that is
+        // systematically optimistic only shows up in this comparison.
+        const settled = await reconcile(rpc, res.signature, ctx.signer.address, USDC_RESERVE.liquidityMint);
+        if (settled) {
+          ctx.ledger.win(settled);
+          const actual = new Decimal(settled.usdcDelta.toString()).div(1e6);
+          const estimated = plan.expectedProfitUsdc;
+          const driftPct = estimated.isZero() ? new Decimal(0) : actual.minus(estimated).div(estimated).mul(100);
+          log.info(
+            {
+              signature: res.signature,
+              estimatedUsdc: estimated.toFixed(6),
+              actualUsdc: actual.toFixed(6),
+              driftPct: driftPct.toFixed(2),
+              feeSol: (Number(settled.feeLamports) / 1e9).toFixed(9),
+              ledger: ctx.ledger.summary(),
+            },
+            'liquidation confirmed',
+          );
+        } else {
+          log.info({ signature: res.signature }, 'liquidation confirmed, settlement unreadable');
+        }
       } else {
         ctx.fees.onRaceLost();
-        log.warn({ signature: res.signature, err: res.err }, 'liquidation did not land');
+        // A transaction that landed with an error still paid its fee; one that
+        // never landed paid nothing.
+        const settled = res.landed
+          ? await reconcile(rpc, res.signature, ctx.signer.address, USDC_RESERVE.liquidityMint)
+          : null;
+        ctx.ledger.loss(settled?.feeLamports ?? 0n);
+        log.warn(
+          {
+            signature: res.signature,
+            err: res.err,
+            feeSol: settled ? (Number(settled.feeLamports) / 1e9).toFixed(9) : '0',
+            ledger: ctx.ledger.summary(),
+          },
+          'liquidation did not land',
+        );
       }
     } catch (e) {
       ctx.pool.reportFailure(e);
@@ -302,6 +342,7 @@ async function main(): Promise<void> {
     guard: new InFlightGuard(),
     quarantine: new Quarantine(),
     lookupTables,
+    ledger: new Ledger(),
   };
 
   // systemd sends SIGTERM on stop and on restart; finish the tick in flight
@@ -325,7 +366,7 @@ async function main(): Promise<void> {
     }
     await new Promise((r) => setTimeout(r, CFG.scanIntervalMs));
   }
-  log.info('stopped');
+  log.info({ ledger: ctx.ledger.summary() }, 'stopped');
 }
 
 void main().catch((e) => {
