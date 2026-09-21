@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Decimal } from 'decimal.js';
 import { calculateLiquidationBonus } from '../src/eligibility.js';
 import { buildPlan } from '../src/profit.js';
-import { Ledger, settlementFromMeta } from '../src/execute.js';
+import { Ledger, settlementFromMeta, transactionCostUsdc } from '../src/execute.js';
 import { validateConfig } from '../src/config.js';
 import { USDC_RESERVE, USDY_RESERVE } from '../src/config.js';
 import { decodeWhirlpoolData, orcaContextFromAccounts } from '../src/build/orca.js';
@@ -277,4 +277,31 @@ test('the ledger separates what was earned from what was burned losing', () => {
   assert.equal(s.won, 2);
   assert.equal(s.lost, 3);
   assert.equal(s.landedRate.toFixed(2), '0.40', 'the number that says whether this is worth running');
+});
+
+// ── transaction cost ───────────────────────────────────────────────────────
+
+test('the transaction cost is priced on the CU limit, not on what is consumed', () => {
+  // 350,000 CU reserved at 20,000 micro-lamports/CU = 7,000 lamports of
+  // priority (the price is per million CU), plus the 5,000-lamport base fee:
+  // 12,000 lamports, or 0.0018 USD at 150 USD per SOL.
+  const cost = transactionCostUsdc(350_000, 20_000n, 150);
+  assert.equal(cost.toFixed(6), '0.001800');
+
+  // Consuming only 240,000 CU changes nothing: the reservation is what is
+  // charged, which is why an inflated limit is wasted money.
+  assert.equal(transactionCostUsdc(350_000, 20_000n, 150).toFixed(6), cost.toFixed(6));
+  assert.ok(transactionCostUsdc(240_000, 20_000n, 150).lt(cost), 'a smaller reservation costs less');
+});
+
+test('the SOL price moves the cost proportionally', () => {
+  const at150 = transactionCostUsdc(350_000, 20_000n, 150);
+  const at100 = transactionCostUsdc(350_000, 20_000n, 100);
+  // Hardcoding 150 while SOL trades at 100 overstated the cost by half — and
+  // understated the fee ceiling by the same factor.
+  assert.equal(at150.div(at100).toFixed(4), '1.5000');
+});
+
+test('with no priority fee the cost is just the base fee', () => {
+  assert.equal(transactionCostUsdc(350_000, 0n, 150).toFixed(6), '0.000750');
 });

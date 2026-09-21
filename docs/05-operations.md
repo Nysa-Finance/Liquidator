@@ -65,12 +65,21 @@ Today: **0 obligations**, no debt. A liquidator with nothing to liquidate has no
 |---|---|---|---|
 | B1 | **Run `npm run setup -- --confirm`** | creates the three token accounts and the lookup table, then prints `LOOKUP_TABLE=` for the `.env`. Measured: the uncompressed transaction is **1509 bytes** against a **1232-byte** limit, so without the table every send is refused | one-off, on-chain, spends rent |
 | B2 | **Wire `scanner.ts` into the loop** | `index.ts` still uses the SDK method that downloads whole positions: fine on an empty market, unusable on an active one | `src/index.ts` |
-| B3 | **Real SOL price** | the priority-fee cap hardcodes $150, and the per-transaction fixed cost hardcodes $0.01 | `src/index.ts` |
-| B4 | **Post-confirmation reconciliation** | real profit comes from `pre/postTokenBalances` of the confirmed transaction, not from the estimate | `src/execute.ts` |
-| B5 | **Alerting** | there is no health endpoint and no metrics; a stopped bot is silent | new |
+| B3 | **Alerting** | there is no health endpoint and no metrics; a stopped bot is silent | new |
 
 B1 is enforced rather than remembered: with `DRY_RUN=false` and no
 `LOOKUP_TABLE`, the bot refuses to start.
+
+Two items that used to sit here are done. The SOL price is read from Scope
+(index 0) on every tick, and the per-transaction cost is computed from the CU
+limit and the priority price rather than assumed — note that planning now prices
+the **worst fee the bot would pay** (about $0.30 at the default
+`MAX_PRIORITY_LAMPORTS`, against the $0.01 that was hardcoded), then rechecks
+the plan against the real fee once it is known, which is nearer $0.002. Expect
+a few more plans declined at the estimate stage; that is the estimate being
+honest rather than optimistic. And every confirmed liquidation is now read back
+from the chain, with the drift against the estimate and a running ledger of
+proceeds, burned fees and landed rate.
 
 Recommended before raising volume: a WebSocket listener on the Scope feed
 (currently 2 s polling), the expected-value rule from

@@ -7,7 +7,8 @@ import {
 } from '@solana/kit';
 import { Decimal } from 'decimal.js';
 import { Reserve } from '@kamino-finance/klend-sdk';
-import { CFG, FLASH_SOURCE } from './config.js';
+import { CFG, FLASH_SOURCE, SOL_SCOPE_INDEX } from './config.js';
+import { scopePrice } from './scanner.js';
 import { log } from './logger.js';
 import type { RpcClient, RpcPool } from './rpc.js';
 
@@ -281,6 +282,53 @@ export class Ledger {
       landedRate: attempts === 0 ? 0 : this.won / attempts,
     };
   }
+}
+
+/**
+ * Reads the SOL price from the same Scope feed the reserves are priced against.
+ *
+ * SOL sits at index 0. Reading it costs nothing extra in practice: the feed is
+ * one account, already fetched for the reserve prices.
+ *
+ * Returns null rather than a wrong number when the feed reads implausibly, so
+ * the caller can fall back instead of propagating it into a fee ceiling.
+ */
+export async function readSolPriceUsd(rpc: RpcClient, feed: Address): Promise<number | null> {
+  try {
+    const acc = await rpc.getAccountInfo(feed, { encoding: 'base64' }).send();
+    if (!acc.value) return null;
+    const { price, unixTimestamp } = scopePrice(
+      Buffer.from((acc.value.data as [string, string])[0], 'base64'),
+      SOL_SCOPE_INDEX,
+    );
+    const age = Math.floor(Date.now() / 1000) - Number(unixTimestamp);
+    if (!Number.isFinite(price) || price < 1 || price > 10_000 || age > 600) {
+      log.warn({ price, ageSeconds: age }, 'implausible SOL price from Scope');
+      return null;
+    }
+    return price;
+  } catch (e) {
+    log.warn({ err: String(e) }, 'could not read the SOL price');
+    return null;
+  }
+}
+
+/**
+ * What one transaction costs, in USDC.
+ *
+ * Subtracted from the profit before deciding whether a plan is worth taking, so
+ * a number pulled out of the air distorts the decision itself. The priority fee
+ * is charged on the CU LIMIT, not on the units actually consumed.
+ */
+export function transactionCostUsdc(
+  computeUnitLimit: number,
+  microLamportsPerCu: bigint,
+  solPriceUsd: number,
+  signatures = 1,
+): Decimal {
+  const base = 5_000n * BigInt(signatures);
+  const priority = (BigInt(computeUnitLimit) * microLamportsPerCu) / 1_000_000n;
+  return new Decimal((base + priority).toString()).div(1e9).mul(solPriceUsd);
 }
 
 /**

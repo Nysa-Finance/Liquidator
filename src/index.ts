@@ -3,6 +3,7 @@ import { KaminoMarket, getCurrentLedgerInstant, type KaminoObligation } from '@k
 import { address, fetchAddressesForLookupTables, type Address } from '@solana/kit';
 import {
   CFG,
+  SOL_PRICE_FALLBACK_USD,
   validateConfig,
   KLEND_PROGRAM,
   TARGET_MARKET,
@@ -21,6 +22,8 @@ import { buildLiquidationMessage, type Atas, type LookupTables } from './build/t
 import {
   InFlightGuard,
   Ledger,
+  readSolPriceUsd,
+  transactionCostUsdc,
   PriorityFeeOracle,
   Quarantine,
   readFlashLiquidity,
@@ -87,6 +90,11 @@ async function tick(ctx: {
   // market's reserve map and has to be read on its own.
   const flashAvailable = await readFlashLiquidity(rpc);
 
+  // Both the fee ceiling and the per-transaction cost are denominated in SOL but
+  // capped in USDC, so they need a price. Read once per tick from the same feed
+  // the reserves are priced against.
+  const solPrice = (await readSolPriceUsd(rpc, TARGET_MARKET.scopePrices)) ?? SOL_PRICE_FALLBACK_USD;
+
   const obligations: KaminoObligation[] = await ctx.market.getAllObligationsForMarket(instant);
   log.debug({ slot: slot.toString(), obligations: obligations.length }, 'scan');
 
@@ -114,7 +122,13 @@ async function tick(ctx: {
       orca,
       slot,
       nowSeconds,
-      fixedCostUsdc: new Decimal(0.01),
+      // Priced at the most this bot would ever pay, so the estimate errs on the
+      // pessimistic side; the number is recomputed with the real fee below.
+      fixedCostUsdc: transactionCostUsdc(
+        DEFAULT_CU_LIMIT,
+        (BigInt(CFG.maxPriorityLamports) * 1_000_000n) / BigInt(DEFAULT_CU_LIMIT),
+        solPrice,
+      ),
       flashAvailable,
     });
     if (!planRes.ok) {
@@ -198,7 +212,7 @@ async function tick(ctx: {
         [plan.obligation, USDC_RESERVE.address, USDY_RESERVE.address, FLASH_SOURCE.reserve, ORCA_POOL.address],
         cuLimit,
         plan.expectedProfitUsdc,
-        /* solPriceUsdc */ 150,
+        solPrice,
       );
 
       // Everything above was decided on `slot`. If the chain has moved on since,
@@ -208,6 +222,20 @@ async function tick(ctx: {
         log.warn(
           { obligation: key, snapshotSlot: slot.toString(), nowSlot: nowSlot.toString() },
           'snapshot aged out while planning — dropping instead of sending stale',
+        );
+        continue;
+      }
+
+      // The estimate above priced the worst fee allowed; with the real one the
+      // cost may differ enough to change the answer.
+      const realCost = transactionCostUsdc(cuLimit, priorityPrice, solPrice);
+      const profitAtRealCost = plan.expectedProfitUsdc
+        .plus(plan.fixedCostUsdc)
+        .minus(realCost);
+      if (profitAtRealCost.lt(CFG.minProfitUsdc)) {
+        log.info(
+          { obligation: key, profitAtRealCost: profitAtRealCost.toFixed(6), feeUsdc: realCost.toFixed(6) },
+          'no longer clears the floor once the real fee is priced in',
         );
         continue;
       }

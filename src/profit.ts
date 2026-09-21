@@ -34,6 +34,8 @@ export type LiquidationPlan = {
   expectedUsdyOut: bigint;
   expectedUsdcOut: bigint;
   expectedProfitUsdc: Decimal;
+  /** the transaction cost this estimate was priced with */
+  fixedCostUsdc: Decimal;
   worstCaseProfitUsdc: Decimal;
   bonusRate: Decimal;
   oracleRatio: Decimal;
@@ -176,6 +178,7 @@ export function buildPlan(args: {
       expectedUsdyOut: usdyIn,
       expectedUsdcOut: quote.tokenEstOut,
       expectedProfitUsdc: expectedProfit,
+      fixedCostUsdc: args.fixedCostUsdc,
       worstCaseProfitUsdc: worstProfit,
       bonusRate: eligibility.bonusRate,
       oracleRatio: rho,

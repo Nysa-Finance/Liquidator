@@ -200,8 +200,7 @@ the local fork, so what remains untested is submission against mainnet itself.
 Before a live send: run `npm run setup -- --confirm` once (token accounts and
 lookup table — the uncompressed transaction measures **1509 bytes** against a
 **1232-byte** limit, and the bot refuses to start with `DRY_RUN=false` until
-`LOOKUP_TABLE` is set), then wire the scanner into the loop, take the SOL price
-from a feed, reconcile after confirmation, and add alerting.
+`LOOKUP_TABLE` is set), then wire the scanner into the loop and add alerting.
 
 Three more belong to the curator — the USDY oracle index, reserve liquidity,
 actual borrowers — and `npm run test:ready` tracks them. See

@@ -18,6 +18,15 @@ export const MEMO_PROGRAM = address('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr
 export const SYSVAR_INSTRUCTIONS = address('Sysvar1nstructions1111111111111111111111111');
 export const FARMS_PROGRAM = address('FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr');
 
+/**
+ * Scope index for SOL on the same feed the reserves read. Verified against the
+ * live feed: indices 0/1/2 carry SOL/ETH/BTC.
+ */
+export const SOL_SCOPE_INDEX = 0;
+
+/** Used only when the feed cannot be read; the fee ceiling is then approximate. */
+export const SOL_PRICE_FALLBACK_USD = 150;
+
 // ── Target market: "USDY Ondo Market" ──────────────────────────────────────
 export const TARGET_MARKET = {
   address: address('F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy'),
