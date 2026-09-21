@@ -12,6 +12,7 @@ import { address, type Address } from '@solana/kit';
 
 // ── Programs ───────────────────────────────────────────────────────────────
 export const KLEND_PROGRAM = address('KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD');
+export const WHIRLPOOL_PROGRAM_ID = address('whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc');
 export const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 export const MEMO_PROGRAM = address('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 export const SYSVAR_INSTRUCTIONS = address('Sysvar1nstructions1111111111111111111111111');
@@ -104,9 +105,26 @@ function req(name: string): string {
   if (!v) throw new Error(`Missing environment variable: ${name}`);
   return v;
 }
+/**
+ * Every comparison against NaN is false, so an unparsable threshold would not
+ * reject anything — a losing plan would sail past minimum profit, minimum margin
+ * and the oracle divergence guard in silence. Refuse to start instead.
+ *
+ * The usual way to get here is an inline comment in the env file: systemd's
+ * EnvironmentFile and `docker run --env-file` keep everything after the `#` as
+ * part of the value, unlike a shell or Node's --env-file.
+ */
 function num(name: string, dflt: number): number {
   const v = process.env[name];
-  return v === undefined ? dflt : Number(v);
+  if (v === undefined) return dflt;
+  const n = Number(v);
+  if (!Number.isFinite(n)) {
+    throw new Error(
+      `${name}="${v}" is not a number. Remove any trailing comment: systemd and ` +
+        `docker --env-file keep everything after the '#' as part of the value.`,
+    );
+  }
+  return n;
 }
 
 /**
@@ -130,8 +148,48 @@ export const CFG = {
   get maxPriorityLamports() { return num('MAX_PRIORITY_LAMPORTS', 2_000_000); },
   get maxPriorityProfitFraction() { return num('MAX_PRIORITY_PROFIT_FRACTION', 0.25); },
 
+  get maxSnapshotAgeSlots() { return num('MAX_SNAPSHOT_AGE_SLOTS', 4); },
   get scanIntervalMs() { return num('SCAN_INTERVAL_MS', 2000); },
+  get lookupTable() { return process.env.LOOKUP_TABLE ?? ''; },
   get logLevel() { return process.env.LOG_LEVEL ?? 'info'; },
 } as const;
+
+/**
+ * Fails fast on a configuration that would quietly misbehave. Called once at
+ * start-up so a bad value stops the bot instead of disarming a guard.
+ */
+export function validateConfig(): void {
+  // touching every getter forces num() to parse, and to throw on garbage
+  const c = {
+    minProfitUsdc: CFG.minProfitUsdc,
+    minMarginBps: CFG.minMarginBps,
+    maxOracleDivergenceBps: CFG.maxOracleDivergenceBps,
+    maxSnapshotAgeSlots: CFG.maxSnapshotAgeSlots,
+    liqSlippageBps: CFG.liqSlippageBps,
+    swapSlippageBps: CFG.swapSlippageBps,
+    maxPriorityLamports: CFG.maxPriorityLamports,
+    maxPriorityProfitFraction: CFG.maxPriorityProfitFraction,
+    scanIntervalMs: CFG.scanIntervalMs,
+  };
+
+  for (const [k, v] of Object.entries(c)) {
+    if (v < 0) throw new Error(`${k} must not be negative, got ${v}`);
+  }
+
+  // The swap is sized on the guaranteed minimum, so this haircut comes straight
+  // out of the bonus. At the 200 bps floor the break-even is about 180 bps once
+  // the Orca fee and the flash fee are paid; past that the swap no longer
+  // repays the flash loan and every liquidation reverts.
+  const MAX_SAFE_LIQ_SLIPPAGE_BPS = 150;
+  if (c.liqSlippageBps > MAX_SAFE_LIQ_SLIPPAGE_BPS) {
+    throw new Error(
+      `LIQ_SLIPPAGE_BPS=${c.liqSlippageBps} exceeds ${MAX_SAFE_LIQ_SLIPPAGE_BPS}: the haircut ` +
+        `would eat the 200 bps minimum bonus and the swap could not repay the flash loan`,
+    );
+  }
+  if (c.maxPriorityProfitFraction > 1) {
+    throw new Error(`MAX_PRIORITY_PROFIT_FRACTION=${c.maxPriorityProfitFraction} would pay out more than the profit`);
+  }
+}
 
 export type { Address };

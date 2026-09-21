@@ -1,8 +1,9 @@
 import { Decimal } from 'decimal.js';
 import { KaminoMarket, getCurrentLedgerInstant, type KaminoObligation } from '@kamino-finance/klend-sdk';
-import { address, type Address } from '@solana/kit';
+import { address, fetchAddressesForLookupTables, type Address } from '@solana/kit';
 import {
   CFG,
+  validateConfig,
   KLEND_PROGRAM,
   TARGET_MARKET,
   USDC_RESERVE,
@@ -16,8 +17,16 @@ import { evaluate } from './eligibility.js';
 import { buildPlan } from './profit.js';
 import { loadOrcaContext } from './build/orca.js';
 import { loadPdas } from './build/klend.js';
-import { buildLiquidationMessage, type Atas } from './build/tx.js';
-import { InFlightGuard, PriorityFeeOracle, sendAndConfirm, signToWire, simulate } from './execute.js';
+import { buildLiquidationMessage, type Atas, type LookupTables } from './build/tx.js';
+import {
+  InFlightGuard,
+  PriorityFeeOracle,
+  Quarantine,
+  readFlashLiquidity,
+  sendAndConfirm,
+  signToWire,
+  simulate,
+} from './execute.js';
 
 const RECENT_SLOT_DURATION_MS = 450;
 const DEFAULT_CU_LIMIT = 420_000;
@@ -40,6 +49,8 @@ async function tick(ctx: {
   pdas: Awaited<ReturnType<typeof loadPdas>>;
   fees: PriorityFeeOracle;
   guard: InFlightGuard;
+  quarantine: Quarantine;
+  lookupTables: LookupTables | undefined;
 }): Promise<void> {
   const rpc = ctx.pool.active();
   // slot and blockTime read at the same commitment: one coherent snapshot,
@@ -57,6 +68,22 @@ async function tick(ctx: {
     return;
   }
 
+  // The curator can attach a farm at any time. liquidateV2 passes both farm
+  // pairs as none(), which is only correct while these two stay unset — so it
+  // is checked every tick, not only in preflight.
+  const NONE = '11111111111111111111111111111111';
+  if (String(collReserve.state.farmCollateral) !== NONE || String(debtReserve.state.farmDebt) !== NONE) {
+    log.error(
+      { collateralFarm: collReserve.state.farmCollateral, debtFarm: debtReserve.state.farmDebt },
+      'a farm was attached to the collateral or debt side — liquidateV2 would revert, refusing to plan',
+    );
+    return;
+  }
+
+  // The flash source sits in a different lending market, so it is not in this
+  // market's reserve map and has to be read on its own.
+  const flashAvailable = await readFlashLiquidity(rpc);
+
   const obligations: KaminoObligation[] = await ctx.market.getAllObligationsForMarket(instant);
   log.debug({ slot: slot.toString(), obligations: obligations.length }, 'scan');
 
@@ -66,6 +93,8 @@ async function tick(ctx: {
 
   for (const ob of obligations) {
     const key = ob.obligationAddress as string;
+
+    if (ctx.quarantine.isHeld(key, slot)) continue;
 
     const elig = evaluate(ctx.market, ob, debtReserve, collReserve);
     if (!elig.ok) {
@@ -83,6 +112,7 @@ async function tick(ctx: {
       slot,
       nowSeconds,
       fixedCostUsdc: new Decimal(0.01),
+      flashAvailable,
     });
     if (!planRes.ok) {
       log.debug({ obligation: key, reason: planRes.reason }, 'plan rejected');
@@ -108,6 +138,7 @@ async function tick(ctx: {
         blockhash: bh,
         computeUnitLimit: DEFAULT_CU_LIMIT,
         computeUnitPriceMicroLamports: 1_000n,
+        lookupTables: ctx.lookupTables,
       });
 
       const wire = await signToWire(message);
@@ -119,6 +150,7 @@ async function tick(ctx: {
 
       const sim = await simulate(rpc, wire, ctx.atas.usdc, balBefore);
       if (!sim.ok) {
+        ctx.quarantine.record(key, slot, JSON.stringify(sim.err));
         log.warn(
           { obligation: key, err: sim.err, logs: sim.logs.slice(-8) },
           'simulation failed — not submitting',
@@ -166,6 +198,17 @@ async function tick(ctx: {
         /* solPriceUsdc */ 150,
       );
 
+      // Everything above was decided on `slot`. If the chain has moved on since,
+      // the prices behind the plan are no longer the prices it will execute at.
+      const nowSlot = await rpc.getSlot({ commitment: 'processed' }).send();
+      if (nowSlot - slot > BigInt(CFG.maxSnapshotAgeSlots)) {
+        log.warn(
+          { obligation: key, snapshotSlot: slot.toString(), nowSlot: nowSlot.toString() },
+          'snapshot aged out while planning — dropping instead of sending stale',
+        );
+        continue;
+      }
+
       const { value: bh2 } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
       const finalMsg = buildLiquidationMessage({
         signer: ctx.signer,
@@ -177,6 +220,7 @@ async function tick(ctx: {
         blockhash: bh2,
         computeUnitLimit: cuLimit,
         computeUnitPriceMicroLamports: priorityPrice,
+        lookupTables: ctx.lookupTables,
       });
       const finalWire = await signToWire(finalMsg);
 
@@ -190,6 +234,7 @@ async function tick(ctx: {
       }
     } catch (e) {
       ctx.pool.reportFailure(e);
+      ctx.quarantine.record(key, slot, String(e));
       log.error({ obligation: key, err: String(e) }, 'execution error');
     } finally {
       ctx.guard.release(key);
@@ -197,7 +242,21 @@ async function tick(ctx: {
   }
 }
 
+/**
+ * Loads the lookup table's contents so the builder can compress against it.
+ * Without one the transaction serializes to ~1509 bytes against a 1232-byte
+ * limit and is refused by the network, so a live run without it is blocked.
+ */
+async function loadLookupTable(rpc: ReturnType<RpcPool['active']>): Promise<LookupTables | undefined> {
+  if (!CFG.lookupTable) return undefined;
+  const table = address(CFG.lookupTable);
+  const addrs = await fetchAddressesForLookupTables([table], rpc);
+  log.info({ table, addresses: Object.values(addrs)[0]?.length ?? 0 }, 'lookup table loaded');
+  return addrs as LookupTables;
+}
+
 async function main(): Promise<void> {
+  validateConfig();
   const pool = makeRpcPool();
   const signer = await loadSigner();
   const atas = await findAtas(signer.address);
@@ -222,7 +281,16 @@ async function main(): Promise<void> {
     },
     'bot starting',
   );
-  if (!CFG.dryRun) log.warn('DRY_RUN IS OFF: real transactions will be submitted');
+  if (!CFG.dryRun) {
+    log.warn('DRY_RUN IS OFF: real transactions will be submitted');
+    if (!CFG.lookupTable) {
+      throw new Error(
+        'LOOKUP_TABLE is not set. Without it the transaction serializes past the 1232-byte ' +
+          'network limit and every send is refused. Run `npm run setup -- --confirm` first.',
+      );
+    }
+  }
+  const lookupTables = await loadLookupTable(pool.active());
 
   const ctx = {
     pool,
@@ -232,9 +300,22 @@ async function main(): Promise<void> {
     pdas,
     fees: new PriorityFeeOracle(),
     guard: new InFlightGuard(),
+    quarantine: new Quarantine(),
+    lookupTables,
   };
 
-  for (;;) {
+  // systemd sends SIGTERM on stop and on restart; finish the tick in flight
+  // rather than dying mid-transaction.
+  let stopping = false;
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(sig, () => {
+      if (stopping) process.exit(1);
+      stopping = true;
+      log.warn({ signal: sig }, 'shutting down after the current tick');
+    });
+  }
+
+  while (!stopping) {
     try {
       await tick(ctx);
       pool.reportSuccess();
@@ -244,6 +325,7 @@ async function main(): Promise<void> {
     }
     await new Promise((r) => setTimeout(r, CFG.scanIntervalMs));
   }
+  log.info('stopped');
 }
 
 void main().catch((e) => {

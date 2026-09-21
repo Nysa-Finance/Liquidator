@@ -63,14 +63,19 @@ Today: **0 obligations**, no debt. A liquidator with nothing to liquidate has no
 
 | # | Item | Why it blocks | Where |
 |---|---|---|---|
-| B1 | **Address Lookup Table** | the transaction touches ~45-50 accounts; without an ALT it risks exceeding the size limit | new file, plus `src/build/tx.ts` |
-| B2 | **Create the 3 token accounts** | `USDC`, `USDY`, **`cUSDY`** — the last one is always forgotten, and the liquidation uses it as transit | one-off, outside the hot loop |
-| B3 | **Wire `scanner.ts` into the loop** | `index.ts` still uses the SDK method that downloads whole positions: fine on an empty market, unusable on an active one | `src/index.ts` |
-| B4 | **Real SOL price** | the priority-fee cap hardcodes $150; if SOL moves, the cost ceiling is wrong | `src/index.ts` |
-| B5 | **Post-confirmation reconciliation** | real profit comes from `pre/postTokenBalances` of the confirmed transaction, not from the estimate | `src/execute.ts` |
+| B1 | **Run `npm run setup -- --confirm`** | creates the three token accounts and the lookup table, then prints `LOOKUP_TABLE=` for the `.env`. Measured: the uncompressed transaction is **1509 bytes** against a **1232-byte** limit, so without the table every send is refused | one-off, on-chain, spends rent |
+| B2 | **Wire `scanner.ts` into the loop** | `index.ts` still uses the SDK method that downloads whole positions: fine on an empty market, unusable on an active one | `src/index.ts` |
+| B3 | **Real SOL price** | the priority-fee cap hardcodes $150, and the per-transaction fixed cost hardcodes $0.01 | `src/index.ts` |
+| B4 | **Post-confirmation reconciliation** | real profit comes from `pre/postTokenBalances` of the confirmed transaction, not from the estimate | `src/execute.ts` |
+| B5 | **Alerting** | there is no health endpoint and no metrics; a stopped bot is silent | new |
+
+B1 is enforced rather than remembered: with `DRY_RUN=false` and no
+`LOOKUP_TABLE`, the bot refuses to start.
 
 Recommended before raising volume: a WebSocket listener on the Scope feed
-(currently 2 s polling) and an external lock if more than one instance runs.
+(currently 2 s polling), the expected-value rule from
+[03-profitability.md](03-profitability.md) §6 rule (2), and an external lock if
+more than one instance runs.
 
 ## 3. Operational setup
 
@@ -128,6 +133,16 @@ the landing rate drops below 30%. Logs to file, rotated.
 ## 4. Go-live sequence
 
 No step is skipped, and each has a verifiable exit condition.
+
+**0 — One-off on-chain setup**
+
+```bash
+npm run setup                  # show what it would create
+npm run setup -- --confirm     # create it
+```
+
+Spends SOL: rent for three token accounts and for the lookup table. Put the
+`LOOKUP_TABLE=` it prints into `.env`.
 
 **1 — Preflight green**
 

@@ -2,9 +2,11 @@ import {
   getBase64EncodedWireTransaction,
   signTransactionMessageWithSigners,
   type Address,
+  type Signature,
 } from '@solana/kit';
 import { Decimal } from 'decimal.js';
-import { CFG } from './config.js';
+import { Reserve } from '@kamino-finance/klend-sdk';
+import { CFG, FLASH_SOURCE } from './config.js';
 import { log } from './logger.js';
 import type { RpcClient, RpcPool } from './rpc.js';
 
@@ -125,14 +127,31 @@ export async function sendAndConfirm(
   lastValidBlockHeight: bigint,
 ): Promise<{ signature: string; landed: boolean; err: unknown }> {
   const rpc = pool.active();
-  const signature = await rpc
-    .sendTransaction(wireTxBase64 as never, {
-      encoding: 'base64',
-      skipPreflight: true, // we already ran preflight ourselves, and better
-      maxRetries: 0n,      // rebroadcast handled below
-      preflightCommitment: 'processed',
-    })
-    .send();
+
+  // The transaction is signed, so its signature is fixed and broadcasting it
+  // more than once is idempotent. Send on every endpoint: a primary that is
+  // slow or behind loses a race the secondary would have won.
+  const broadcast = () =>
+    Promise.allSettled(
+      pool.all().map((c) =>
+        c
+          .sendTransaction(wireTxBase64 as never, {
+            encoding: 'base64',
+            skipPreflight: true, // we already ran preflight ourselves, and better
+            maxRetries: 0n, // rebroadcast handled below
+            preflightCommitment: 'processed',
+          })
+          .send(),
+      ),
+    );
+
+  const first = await broadcast();
+  const ok = first.find((r) => r.status === 'fulfilled');
+  if (!ok) {
+    const why = first.map((r) => (r.status === 'rejected' ? String(r.reason) : '')).join('; ');
+    return { signature: '', landed: false, err: `every endpoint refused the transaction: ${why}` };
+  }
+  const signature = (ok as PromiseFulfilledResult<Signature>).value;
 
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
@@ -148,15 +167,7 @@ export async function sendAndConfirm(
     if (height > lastValidBlockHeight) {
       return { signature, landed: false, err: 'blockhash-expired' };
     }
-    // rebroadcast: identical signature, so the operation is idempotent
-    await rpc
-      .sendTransaction(wireTxBase64 as never, {
-        encoding: 'base64',
-        skipPreflight: true,
-        maxRetries: 0n,
-      })
-      .send()
-      .catch(() => undefined);
+    await broadcast();
     await new Promise((r) => setTimeout(r, 400));
   }
   return { signature, landed: false, err: 'timeout' };
@@ -165,6 +176,48 @@ export async function sendAndConfirm(
 export async function signToWire(message: Parameters<typeof signTransactionMessageWithSigners>[0]) {
   const signed = await signTransactionMessageWithSigners(message);
   return getBase64EncodedWireTransaction(signed);
+}
+
+/**
+ * Reads how much the flash source reserve can lend right now.
+ *
+ * It sits in a different lending market from the target, so it is not in that
+ * market's reserve map — looking it up there silently returns nothing and the
+ * pre-check never fires.
+ */
+export async function readFlashLiquidity(rpc: RpcClient): Promise<Decimal> {
+  const acc = await rpc.getAccountInfo(FLASH_SOURCE.reserve, { encoding: 'base64' }).send();
+  if (!acc.value) return new Decimal(0);
+  const reserve = Reserve.decode(Buffer.from((acc.value.data as [string, string])[0], 'base64'));
+  return new Decimal(reserve.liquidity.totalAvailableAmount.toString());
+}
+
+/**
+ * Holds back a position that keeps failing.
+ *
+ * Without it a position that can never succeed is retried every tick forever,
+ * paying a fee each time. Back-off doubles per consecutive failure.
+ */
+export class Quarantine {
+  private readonly held = new Map<string, { until: bigint; strikes: number }>();
+
+  isHeld(obligation: string, slot: bigint): boolean {
+    const e = this.held.get(obligation);
+    if (!e) return false;
+    if (slot >= e.until) {
+      this.held.delete(obligation);
+      return false;
+    }
+    return true;
+  }
+
+  record(obligation: string, slot: bigint, reason: string): void {
+    const strikes = (this.held.get(obligation)?.strikes ?? 0) + 1;
+    // 30 slots (~12s), doubling per strike, capped at roughly 20 minutes
+    const slots = BigInt(Math.min(30 * 2 ** (strikes - 1), 3000));
+    this.held.set(obligation, { until: slot + slots, strikes });
+    log.debug({ obligation, strikes, holdSlots: slots.toString(), reason }, 'quarantined');
+  }
 }
 
 /** In-process lock: one plan in flight per obligation. */

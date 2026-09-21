@@ -33,6 +33,11 @@ export class RpcPool {
     return this.clients[this.idx]!;
   }
 
+  /** Every configured endpoint, for idempotent broadcast of a signed transaction. */
+  all(): readonly RpcClient[] {
+    return this.clients;
+  }
+
   /** Call after every network error; promotes the next endpoint after 3 strikes. */
   reportFailure(err: unknown): void {
     this.strikes += 1;

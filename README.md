@@ -76,6 +76,13 @@ Real USDY -> USDC quote on the exit pool, to calibrate slippage:
 npm run quote 1000 10000 50000
 ```
 
+One-off on-chain setup — three token accounts and the lookup table the
+transaction needs (spends rent, prints `LOOKUP_TABLE=` for your `.env`):
+
+```bash
+npm run setup -- --confirm
+```
+
 Run in dry-run mode (the default: **nothing is ever submitted**):
 
 ```bash
@@ -105,7 +112,7 @@ npm run test:ready
 
 ### What is covered
 
-**Local (LiteSVM)** — 7 tests on the real programs, including **the full
+**Local (LiteSVM)** — 17 tests on the real programs, including **the full
 production path**: a lender supplies USDC, a borrower deposits USDY and borrows
 against it through klend's own instructions, the oracle drops from 1.1435 to
 1.04, the position crosses its 95% threshold, and the bot's own transaction
@@ -190,7 +197,12 @@ scripts/
 `DRY_RUN=true` is the default. The transaction path is now covered end to end in
 the local fork, so what remains untested is submission against mainnet itself.
 
-Five items remain before production — ALT, token accounts, wiring the scanner
-into the loop, a real SOL price, reconciliation — plus the three the curator owns
-(the USDY oracle index, reserve liquidity, actual borrowers). `npm run test:ready`
-tracks the latter three. See [docs/05-operations.md](docs/05-operations.md).
+Before a live send: run `npm run setup -- --confirm` once (token accounts and
+lookup table — the uncompressed transaction measures **1509 bytes** against a
+**1232-byte** limit, and the bot refuses to start with `DRY_RUN=false` until
+`LOOKUP_TABLE` is set), then wire the scanner into the loop, take the SOL price
+from a feed, reconcile after confirmation, and add alerting.
+
+Three more belong to the curator — the USDY oracle index, reserve liquidity,
+actual borrowers — and `npm run test:ready` tracks them. See
+[docs/05-operations.md](docs/05-operations.md).

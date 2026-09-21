@@ -54,6 +54,8 @@ export function buildPlan(args: {
   nowSeconds: bigint;
   /** fixed-cost estimate in USDC (base fee + priority fee, converted) */
   fixedCostUsdc: Decimal;
+  /** base units of USDC the flash source reserve can lend right now */
+  flashAvailable: Decimal;
 }): PlanResult {
   const { obligation, debtReserve, collReserve, eligibility, orca } = args;
 
@@ -123,14 +125,23 @@ export function buildPlan(args: {
   if (usdyNet.lte(0)) return { ok: false, reason: 'dust' };
 
   // ── 4. liquidity available for the flash loan ─────────────────────────
-  // (simulation is the final word; this only avoids certainly-doomed txs)
-  const flashReserve = args.market.getReserveByAddress(FLASH_SOURCE.reserve);
-  if (flashReserve && repay.gt(flashReserve.getLiquidityAvailableAmount())) {
+  // The flash source lives in a different lending market, so it cannot be looked
+  // up through this market's reserve map — the caller loads it and passes the
+  // amount in. (Simulation is the final word; this only avoids doomed txs.)
+  if (repay.gt(args.flashAvailable)) {
     return { ok: false, reason: 'insufficient-flash-liquidity' };
   }
 
-  // ── 5. Orca quote ─────────────────────────────────────────────────────
-  const usdyIn = BigInt(usdyNet.toFixed(0));
+  // ── 5. Orca quote, sized on the GUARANTEED amount ─────────────────────
+  // klend guarantees at least `minReceivedUsdy` arrives and may deliver more.
+  // The swap therefore spends exactly that floor: selling the estimate instead
+  // would overspend by one base unit whenever the on-chain math rounds down,
+  // and revert the whole transaction. Anything above the floor stays behind and
+  // is swept by a later liquidation — the safe side of the trade.
+  const minReceivedUsdy = BigInt(
+    usdyNet.mul(BPS.minus(CFG.liqSlippageBps)).div(BPS).floor().toFixed(0),
+  );
+  const usdyIn = minReceivedUsdy;
   const quote = quoteUsdyToUsdc(orca, usdyIn, CFG.swapSlippageBps, args.nowSeconds);
 
   // ρ = Orca market price / Scope oracle price (both USDY denominated in USDC)
@@ -153,11 +164,6 @@ export function buildPlan(args: {
   if (worstProfit.lt(CFG.minProfitUsdc)) return { ok: false, reason: 'below-min-profit' };
   const marginBps = expectedProfit.div(toUsdc(repay)).mul(BPS);
   if (marginBps.lt(CFG.minMarginBps)) return { ok: false, reason: 'below-min-margin' };
-
-  // ── 7. on-chain guards ────────────────────────────────────────────────
-  const minReceivedUsdy = BigInt(
-    usdyNet.mul(BPS.minus(CFG.liqSlippageBps)).div(BPS).floor().toFixed(0),
-  );
 
   return {
     ok: true,

@@ -9,7 +9,7 @@ import {
   quoteUsdyToUsdc,
 } from '../src/build/orca.js';
 import { loadPdas } from '../src/build/klend.js';
-import { buildLiquidationMessage } from '../src/build/tx.js';
+import { buildLiquidationMessage, MAX_TRANSACTION_BYTES, wireSize } from '../src/build/tx.js';
 import { ORCA_POOL } from '../src/config.js';
 import { forgeTokenAccount, loadWorld, readTokenAmount, setScopePrice, type World } from './world.js';
 import { openPosition, refreshPosition, seedUsdcLiquidity, send } from './setup-position.js';
@@ -147,6 +147,15 @@ test('a borrowed position can be opened, pushed underwater, and liquidated at a 
     computeUnitPriceMicroLamports: 0n,
   });
 
+  // LiteSVM never applies the network's packet limit, so without this the test
+  // would happily pass on a transaction mainnet refuses to accept.
+  const bytes = await wireSize(message);
+  assert.ok(
+    bytes > MAX_TRANSACTION_BYTES,
+    `expected the uncompressed message to overrun ${MAX_TRANSACTION_BYTES} bytes; it is ${bytes}. ` +
+      `If lookup tables are now wired in, flip this assertion to <=.`,
+  );
+
   const res = await send(world, liquidator, [...message.instructions], 'liquidation');
 
   const usdcAfter = readTokenAmount(world, atas.usdc);
@@ -169,6 +178,7 @@ test('a borrowed position can be opened, pushed underwater, and liquidated at a 
     `USDY residue ${residue} exceeds the 5% floor margin — seized amount mis-estimated`,
   );
 
+  console.log(`    serialized ${bytes} bytes (network limit ${MAX_TRANSACTION_BYTES}) — needs a lookup table`);
   console.log(
     `    repaid ${Number(repay) / 1e6} USDC, seized ~${Number(minUsdy) / 1e6} USDY, ` +
       `profit ${Number(profit) / 1e6} USDC, residue ${Number(residue) / 1e6} USDY, ` +
