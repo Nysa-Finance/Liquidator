@@ -4,6 +4,7 @@ import { address, fetchAddressesForLookupTables, type Address } from '@solana/ki
 import {
   CFG,
   SOL_PRICE_FALLBACK_USD,
+  SOL_PRICE_FEED,
   validateConfig,
   KLEND_PROGRAM,
   TARGET_MARKET,
@@ -93,7 +94,7 @@ async function tick(ctx: {
   // Both the fee ceiling and the per-transaction cost are denominated in SOL but
   // capped in USDC, so they need a price. Read once per tick from the same feed
   // the reserves are priced against.
-  const solPrice = (await readSolPriceUsd(rpc, TARGET_MARKET.scopePrices)) ?? SOL_PRICE_FALLBACK_USD;
+  const solPrice = (await readSolPriceUsd(rpc, SOL_PRICE_FEED)) ?? SOL_PRICE_FALLBACK_USD;
 
   const obligations: KaminoObligation[] = await ctx.market.getAllObligationsForMarket(instant);
   log.debug({ slot: slot.toString(), obligations: obligations.length }, 'scan');

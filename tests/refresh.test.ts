@@ -15,10 +15,10 @@ import { TARGET_MARKET, USDC_RESERVE, USDY_RESERVE } from '../src/config.js';
 import { refreshReserveIx } from '../src/build/klend.js';
 import { loadWorld, setScopePrice, type World } from './world.js';
 
-/** Scope indices used by the market's reserves (read from config.tokenInfo.scopeConfiguration). */
-const USDY_SCOPE_INDEX = 3;
-const USDC_SCOPE_INDEX = 20;
-const USDC_SCOPE_INDEX_2 = 230;
+// The two reserves read different feeds since USDY was repointed, so each
+// price is written where that reserve will actually look for it.
+const [USDY_IDX] = USDY_RESERVE.scopeChain;
+const [USDC_IDX, USDC_IDX_2] = USDC_RESERVE.scopeChain;
 
 async function sendIxs(world: World, signer: Awaited<ReturnType<typeof generateKeyPairSigner>>, ixs: Parameters<typeof appendTransactionMessageInstructions>[0]) {
   const blockhash = world.svm.latestBlockhash();
@@ -52,13 +52,13 @@ test('refreshReserve applies the Scope prices we write ourselves', async () => {
   world.svm.airdrop(signer.address, 10_000_000_000n as never);
 
   // Realistic prices, stamped with the world's current slot/timestamp.
-  setScopePrice(world, TARGET_MARKET.scopePrices, USDY_SCOPE_INDEX, 1.1435);
-  setScopePrice(world, TARGET_MARKET.scopePrices, USDC_SCOPE_INDEX, 1.0);
-  setScopePrice(world, TARGET_MARKET.scopePrices, USDC_SCOPE_INDEX_2, 1.0);
+  setScopePrice(world, USDY_RESERVE.scopeFeed, USDY_IDX!, 1.1435);
+  setScopePrice(world, USDC_RESERVE.scopeFeed, USDC_IDX!, 1.0);
+  setScopePrice(world, USDC_RESERVE.scopeFeed, USDC_IDX_2!, 1.0);
 
   const res = await sendIxs(world, signer, [
-    refreshReserveIx(USDY_RESERVE.address, TARGET_MARKET.address, TARGET_MARKET.scopePrices),
-    refreshReserveIx(USDC_RESERVE.address, TARGET_MARKET.address, TARGET_MARKET.scopePrices),
+    refreshReserveIx(USDY_RESERVE.address, TARGET_MARKET.address, USDY_RESERVE.scopeFeed),
+    refreshReserveIx(USDC_RESERVE.address, TARGET_MARKET.address, USDC_RESERVE.scopeFeed),
   ]);
 
   if (res instanceof FailedTransactionMetadata) {

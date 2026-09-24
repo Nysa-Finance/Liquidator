@@ -19,7 +19,17 @@
 
 They belong to the market curator (`66pW72Fchnr34FGgXrxheGs3BbUsDSwJmGcK7m8Bz1Yv`).
 
-### 1.1 The USDY oracle points at the retired-asset index — the worst one
+### 1.1 ~~The USDY oracle~~ — DONE, ~24 Sep 2026
+
+Fixed by the curator, who moved the reserve to feed `3t4JZcue…` index 406
+(1.14685 USD) rather than repointing the index on the old feed. The two reserves
+therefore read different feeds now; `src/config.ts` carries one per reserve and
+the drift test asserts both.
+
+Kept below because it explains what index 3 is, and because the same failure can
+recur on any reserve.
+
+### 1.1.1 What it was
 
 The USDY reserve's scope chain is `[3]`, and index 3 of the feed holds
 **0.000001 USD**. The real USDY price (~1.145) sits at indices 79/97 of the same

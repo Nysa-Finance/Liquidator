@@ -43,6 +43,7 @@ import {
   KLEND_PROGRAM,
   MEMO_PROGRAM,
   ORCA_POOL,
+  SOL_PRICE_FEED,
   SYSVAR_INSTRUCTIONS,
   TARGET_MARKET,
   TOKEN_PROGRAM,
@@ -86,7 +87,8 @@ async function main() {
   // the blockhash stay outside: those differ per transaction.
   const tableEntries: Address[] = [
     KLEND_PROGRAM, WHIRLPOOL_PROGRAM_ID, FARMS_PROGRAM, TOKEN_PROGRAM, MEMO_PROGRAM, SYSVAR_INSTRUCTIONS,
-    TARGET_MARKET.address, TARGET_MARKET.scopePrices, pdas.targetMarketAuth,
+    TARGET_MARKET.address, pdas.targetMarketAuth,
+    USDY_RESERVE.scopeFeed, USDC_RESERVE.scopeFeed, SOL_PRICE_FEED,
     USDC_RESERVE.address, USDC_RESERVE.liquidityMint, USDC_RESERVE.supplyVault, USDC_RESERVE.feeVault, USDC_RESERVE.collateralMint,
     USDY_RESERVE.address, USDY_RESERVE.liquidityMint, USDY_RESERVE.supplyVault, USDY_RESERVE.feeVault,
     USDY_RESERVE.collateralMint, USDY_RESERVE.collateralSupplyVault,

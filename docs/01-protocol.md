@@ -177,7 +177,26 @@ Market `F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy` — on-chain name
 
 Only the 0.1-token seed deposits created by `init_reserve` are present.
 
-### 6.2 The USDY oracle points at a placeholder index [V] — most severe
+### 6.2 The USDY oracle — FIXED by the curator on ~24 Sep 2026 [V]
+
+The reserve now reads **feed `3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH`,
+index 406 = 1.14685 USD**, refreshed seconds ago, and the reserve has already
+consumed it (`marketPriceSf = 1.14685008`, `stale = 0`).
+
+The curator did not repoint the index on the old feed — they moved the reserve
+to a different feed entirely. So **the two reserves no longer share one**: USDC
+still reads the main feed at chain `[20, 230]`, USDY reads the new feed at
+`[406]`. `refresh_reserve` checks the account passed against the one the reserve
+names, so a single shared feed constant now fails with
+`InvalidScopePriceAccount`. Each reserve carries its own in `src/config.ts`, and
+the live drift test asserts both.
+
+The divergence ratio went from ~1,144,000 to **0.9974** — 26 bps against a 100
+bps guard, so plans are accepted rather than uniformly rejected.
+
+The original finding, kept because it explains what index 3 is:
+
+### 6.2.1 What was wrong — index 3 is the retired-asset marker [V]
 
 The USDY reserve's scope chain is `[3]` on feed `3NJYftD5...`. Decoding that
 account (layout `disc(8) + oracle_mappings(32) + [DatedPrice; 512]`, 56 bytes per

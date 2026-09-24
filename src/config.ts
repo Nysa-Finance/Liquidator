@@ -19,9 +19,13 @@ export const SYSVAR_INSTRUCTIONS = address('Sysvar1nstructions111111111111111111
 export const FARMS_PROGRAM = address('FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr');
 
 /**
- * Scope index for SOL on the same feed the reserves read. Verified against the
- * live feed: indices 0/1/2 carry SOL/ETH/BTC.
+ * Where the SOL price comes from, for pricing fees.
+ *
+ * Kamino's main Scope feed, whose first three entries carry SOL/ETH/BTC —
+ * verified live: 113.05 / 2638.78 / 83302.37. Deliberately independent of what
+ * the reserves read: a reserve can be repointed at another feed, as USDY was.
  */
+export const SOL_PRICE_FEED = address('3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C');
 export const SOL_SCOPE_INDEX = 0;
 
 /** Used only when the feed cannot be read; the fee ceiling is then approximate. */
@@ -32,7 +36,6 @@ export const TARGET_MARKET = {
   address: address('F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy'),
   name: 'USDY Ondo Market',
   owner: address('66pW72Fchnr34FGgXrxheGs3BbUsDSwJmGcK7m8Bz1Yv'),
-  scopePrices: address('3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C'),
   // parameters read on-chain, used as a sanity check against runtime state
   liquidationMaxDebtCloseFactorPct: 25,
   maxLiquidatableDebtMarketValueAtOnce: 30_000,
@@ -53,6 +56,13 @@ export const USDY_RESERVE = {
   feeVault: address('RAZFwzfLEZMzG9toay62VPH5WdUgq8GUhJEdjqzb2yS'),
   collateralMint: address('C7dKsFYaM2DcVJSDjouPTfLc9292Lkd5ti9VQCdx2UDg'),
   collateralSupplyVault: address('AdF4ybj8neZkqoiyxFLkkieRHMboJkDqc1BZGG6SDPhx'),
+  /**
+   * Repointed by the curator around 24 Sep 2026: it used to read index 3 of the
+   * main feed, which is where Kamino parks retired assets and reads 0.000001 USD.
+   * The two reserves no longer share a feed, so each carries its own.
+   */
+  scopeFeed: address('3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH'),
+  scopeChain: [406],
   loanToValuePct: 92,
   liquidationThresholdPct: 95,
   minLiquidationBonusBps: 200,
@@ -71,6 +81,8 @@ export const USDC_RESERVE = {
   supplyVault: address('68YwkFhagT33k8485VtX1MhMYpab97c1MjpWcXFuTYea'),
   feeVault: address('HS5RA3CPZsUvgsKTsgn17tUqKMXiQcCCXK6tiJGfaj1G'),
   collateralMint: address('Eyq6nikS6Mh5zsG2iLCLAB9Rz2dUEsxR5aqMAdxCdQLZ'),
+  scopeFeed: address('3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C'),
+  scopeChain: [20, 230],
   borrowFactorPct: 100,
   hasFarms: false,
 } as const;

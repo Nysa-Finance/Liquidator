@@ -186,6 +186,21 @@ test('the constants in src/config.ts still match on-chain state', async () => {
 
   const usdy = Reserve.decode(await accountData(USDY_RESERVE.address));
   assert.equal(usdy.config.liquidationThresholdPct, USDY_RESERVE.liquidationThresholdPct);
+
+  // The oracle wiring, which is what actually moved: the builder passes these
+  // to refresh_reserve and klend rejects the instruction when they disagree.
+  for (const [name, r, cfgd] of [
+    ['USDY', usdy, USDY_RESERVE],
+    ['USDC', Reserve.decode(await accountData(USDC_RESERVE.address)), USDC_RESERVE],
+  ] as const) {
+    const sc = r.config.tokenInfo.scopeConfiguration;
+    assert.equal(String(sc.priceFeed), cfgd.scopeFeed, `${name} Scope feed moved`);
+    assert.deepEqual(
+      sc.priceChain.filter((x) => x !== 65535),
+      [...cfgd.scopeChain],
+      `${name} Scope price chain moved`,
+    );
+  }
   assert.equal(usdy.config.minLiquidationBonusBps, USDY_RESERVE.minLiquidationBonusBps);
   assert.equal(usdy.config.maxLiquidationBonusBps, USDY_RESERVE.maxLiquidationBonusBps);
   assert.equal(usdy.config.protocolLiquidationFeePct, USDY_RESERVE.protocolLiquidationFeePct);
@@ -222,11 +237,15 @@ test('live Orca quote and oracle divergence check', async () => {
   assert.ok(q.tokenEstOut > 0n);
   assert.ok(avg <= spot, 'the average price cannot exceed spot when selling A→B');
 
+  // The feed and entry the reserve actually names — not a constant, because a
+  // constant is exactly what went stale when the curator repointed it.
+  const usdyReserve = Reserve.decode(await accountData(USDY_RESERVE.address));
+  const cfg = usdyReserve.config.tokenInfo.scopeConfiguration;
+
   // The price Kamino would use for USDY, and the ratio the bot guards on.
   // Its VALUE is a property of the market, not of this code, so it is reported
   // here and asserted in tests/market-ready.test.ts.
-  // index 3 is the Scope entry the USDY reserve is configured to read
-  const scopeUsdy = scopePrice(await accountData(TARGET_MARKET.scopePrices), 3).price;
+  const scopeUsdy = scopePrice(await accountData(address(String(cfg.priceFeed))), cfg.priceChain[0]!).price;
   const rho = spot / scopeUsdy;
   const divergenceBps = Math.abs(rho - 1) * 10_000;
   console.log(

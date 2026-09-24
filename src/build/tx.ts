@@ -82,8 +82,11 @@ export function buildLiquidationMessage(args: {
   const head: Instruction[] = [
     computeUnitLimitIx(args.computeUnitLimit),
     computeUnitPriceIx(args.computeUnitPriceMicroLamports),
-    refreshReserveIx(USDC_RESERVE.address, TARGET_MARKET.address, TARGET_MARKET.scopePrices),
-    refreshReserveIx(USDY_RESERVE.address, TARGET_MARKET.address, TARGET_MARKET.scopePrices),
+    // Each reserve names its own price feed, and klend checks the account passed
+    // matches it. They stopped sharing one when USDY was repointed, so passing a
+    // single feed to both now fails with InvalidScopePriceAccount.
+    refreshReserveIx(USDC_RESERVE.address, TARGET_MARKET.address, USDC_RESERVE.scopeFeed),
+    refreshReserveIx(USDY_RESERVE.address, TARGET_MARKET.address, USDY_RESERVE.scopeFeed),
     refreshObligationIx({
       market: TARGET_MARKET.address,
       obligation: args.plan.obligation,

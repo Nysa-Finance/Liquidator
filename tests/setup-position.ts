@@ -71,8 +71,8 @@ export async function send(world: World, payer: KeyPairSigner, ixs: Instruction[
 }
 
 const refreshBoth = () => [
-  refreshReserveIx(USDC_RESERVE.address, TARGET_MARKET.address, TARGET_MARKET.scopePrices),
-  refreshReserveIx(USDY_RESERVE.address, TARGET_MARKET.address, TARGET_MARKET.scopePrices),
+  refreshReserveIx(USDC_RESERVE.address, TARGET_MARKET.address, USDC_RESERVE.scopeFeed),
+  refreshReserveIx(USDY_RESERVE.address, TARGET_MARKET.address, USDY_RESERVE.scopeFeed),
 ];
 
 /** Supplies USDC to the market so there is something to borrow. */
