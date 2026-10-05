@@ -53,7 +53,7 @@ import {
 } from '../src/config.js';
 import { loadSigner } from '../src/rpc.js';
 import { loadPdas } from '../src/build/klend.js';
-import { tickArrayAddresses } from '../src/build/orca.js';
+import { loadOrcaContext } from '../src/build/orca.js';
 
 const CONFIRM = process.argv.includes('--confirm');
 
@@ -73,15 +73,10 @@ async function main() {
   };
 
   const pdas = await loadPdas();
-  const pool = await rpc.getAccountInfo(ORCA_POOL.address, { encoding: 'base64' }).send();
-  if (!pool.value) throw new Error('Orca pool not found');
-  const poolData = Buffer.from((pool.value.data as [string, string])[0], 'base64');
-  // tickCurrentIndex is an i32 at offset 80 of the Whirlpool account
-  const tickArrays = await tickArrayAddresses(
-    ORCA_POOL.address,
-    poolData.readInt32LE(80),
-    ORCA_POOL.tickSpacing,
-  );
+  // Decoded, not read at a hand-counted byte offset: an earlier version of this
+  // script read the tick index one byte too early and got 354048 instead of the
+  // real 1383, which would have put three wrong tick-array addresses on-chain.
+  const { tickArrays } = await loadOrcaContext(rpc, await rpc.getSlot().send());
 
   // Every account that never changes between liquidations. The obligation and
   // the blockhash stay outside: those differ per transaction.

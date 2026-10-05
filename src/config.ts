@@ -63,7 +63,7 @@ export const USDY_RESERVE = {
    */
   scopeFeed: address('3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH'),
   scopeChain: [406],
-  loanToValuePct: 92,
+  loanToValuePct: 90,
   liquidationThresholdPct: 95,
   minLiquidationBonusBps: 200,
   maxLiquidationBonusBps: 500,
