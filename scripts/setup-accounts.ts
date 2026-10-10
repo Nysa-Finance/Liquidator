@@ -16,10 +16,15 @@
  * A lookup table is usable one slot after creation and cannot be closed for
  * ~512 slots after deactivation, so treat the address it prints as permanent:
  * put it in LOOKUP_TABLE in your .env.
+ *
+ * Safe to re-run. Token accounts that exist are skipped; with LOOKUP_TABLE set
+ * it reuses that table and adds only the addresses it is missing, so a run that
+ * stopped halfway is finished rather than started over with a second table.
  */
 import {
   address,
   appendTransactionMessageInstructions,
+  isSome,
   createSolanaRpc,
   createTransactionMessage,
   getBase64EncodedWireTransaction,
@@ -31,6 +36,7 @@ import {
   type Instruction,
 } from '@solana/kit';
 import {
+  fetchAddressLookupTable,
   getCreateLookupTableInstructionAsync,
   getExtendLookupTableInstruction,
 } from '@solana-program/address-lookup-table';
@@ -106,14 +112,28 @@ async function main() {
   }
   console.log(`to create         ${missing.length ? missing.join(', ') : 'none, all token accounts exist'}`);
 
+  // An existing table is finished, never replaced: a second one would cost
+  // rent again and leave the first one orphaned.
+  let tableAddress: Address | undefined;
+  let toAdd = unique;
+  if (CFG.lookupTable) {
+    tableAddress = address(CFG.lookupTable);
+    const table = await fetchAddressLookupTable(rpc, tableAddress, { commitment: 'confirmed' });
+    const auth = table.data.authority;
+    if (!isSome(auth) || auth.value !== signer.address) {
+      throw new Error(`LOOKUP_TABLE ${tableAddress} is not extendable by ${signer.address}`);
+    }
+    const present = new Set(table.data.addresses);
+    toAdd = unique.filter((a) => !present.has(a));
+    console.log(`existing table    ${tableAddress}: ${present.size} present, ${toAdd.length} to add`);
+  } else {
+    console.log('existing table    none (LOOKUP_TABLE empty): a new one will be created');
+  }
+
   if (!CONFIRM) {
     console.log('\nnothing done. Re-run with --confirm to create these on-chain.');
     return;
   }
-
-  const slot = await rpc.getSlot({ commitment: 'finalized' }).send();
-  const createTable = await getCreateLookupTableInstructionAsync({ authority: signer, payer: signer, recentSlot: slot });
-  const tableAddress = createTable.accounts[0].address as Address;
 
   const send = async (ixs: Instruction[], label: string) => {
     const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
@@ -124,8 +144,23 @@ async function main() {
       (m) => appendTransactionMessageInstructions(ixs, m),
     );
     const wire = getBase64EncodedWireTransaction(await signTransactionMessageWithSigners(msg));
-    const sig = await rpc.sendTransaction(wire as never, { encoding: 'base64' }).send();
-    console.log(`${label}: ${sig}`);
+    // Preflight at 'confirmed', not the default 'finalized': each step builds
+    // on the previous one, which 'finalized' does not show for ~13 s.
+    const sig = await rpc
+      .sendTransaction(wire as never, { encoding: 'base64', preflightCommitment: 'confirmed' })
+      .send();
+    // Wait for it before the next step. Sending the extend right behind the
+    // create once made the extend's preflight find no table at all.
+    for (let i = 0; i < 60; i += 1) {
+      const st = (await rpc.getSignatureStatuses([sig]).send()).value[0];
+      if (st?.err) throw new Error(`${label} failed on-chain: ${JSON.stringify(st.err)} (${sig})`);
+      if (st?.confirmationStatus === 'confirmed' || st?.confirmationStatus === 'finalized') {
+        console.log(`${label}: ${sig}`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new Error(`${label} not confirmed within 60 s (${sig}); re-run to resume`);
   };
 
   const ataIxs = Object.entries(atas)
@@ -141,16 +176,21 @@ async function main() {
     );
   if (ataIxs.length) await send(ataIxs, 'token accounts');
 
-  await send([createTable as unknown as Instruction], 'lookup table created');
+  if (!tableAddress) {
+    const slot = await rpc.getSlot({ commitment: 'finalized' }).send();
+    const createTable = await getCreateLookupTableInstructionAsync({ authority: signer, payer: signer, recentSlot: slot });
+    tableAddress = createTable.accounts[0].address as Address;
+    await send([createTable as unknown as Instruction], `lookup table created ${tableAddress}`);
+  }
 
   // Extend in chunks: each address is 32 bytes and the extend instruction has
   // to fit in a transaction of its own.
-  for (let i = 0; i < unique.length; i += 20) {
-    const chunk = unique.slice(i, i + 20);
+  for (let i = 0; i < toAdd.length; i += 20) {
+    const chunk = toAdd.slice(i, i + 20);
     await send(
       [
         getExtendLookupTableInstruction({
-          address: tableAddress,
+          address: tableAddress!,
           authority: signer,
           payer: signer,
           addresses: chunk,
