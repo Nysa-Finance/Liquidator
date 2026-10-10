@@ -159,6 +159,12 @@ compose at the file instead (the alias, worth adding to `~/.bashrc`).
 
 Update: `sudo git -C /opt/liquidator/app pull && liq up -d --build`.
 
+Security check, read-only, worth re-running monthly:
+`sudo bash /opt/liquidator/app/deploy/check-security.sh`. It verifies SSH,
+firewall and open ports, automatic updates, the container's confinement, the
+secret files' permissions, and that no RPC key or Telegram token reached the
+logs.
+
 One-off commands run in the same image, so the host needs no Node:
 
 ```bash
