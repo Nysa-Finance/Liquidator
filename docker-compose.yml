@@ -1,0 +1,31 @@
+# The liquidator as one container, next to whatever else runs on the host.
+#
+# Layout on the server:
+#   /opt/liquidator/app               this checkout
+#   /opt/liquidator/.env              settings (no trailing comments on a line)
+#   /opt/liquidator/liquidator.json   the hot key, owned by uid 1000, mode 400
+#
+#   docker compose up -d --build      start, or apply an update after git pull
+#   docker compose logs -f            follow the logs
+services:
+  liquidator:
+    build: .
+    image: liquidator:local
+    container_name: liquidator
+    restart: always
+    env_file: ../.env
+    environment:
+      KEYPAIR_PATH: /keys/liquidator.json
+    volumes:
+      - ../liquidator.json:/keys/liquidator.json:ro
+    # It talks to RPCs and Telegram and nothing talks to it: no ports.
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    # SIGTERM lets the round in flight finish; the bot exits within a second.
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "5" }

@@ -139,7 +139,37 @@ Layout on the server (Debian/Ubuntu):
 /opt/liquidator/liquidator.json   the hot key, mode 600
 ```
 
-First install:
+Two ways to run it, same layout, same `.env`. Pick Docker when the host already
+runs containers; pick systemd on a machine dedicated to the bot.
+
+#### Docker
+
+```bash
+sudo git clone git@github.com:Nysa-Finance/Liquidator.git /opt/liquidator/app
+# copy .env and liquidator.json into /opt/liquidator/
+sudo chown 1000:1000 /opt/liquidator/liquidator.json   # the container's user
+sudo chmod 400 /opt/liquidator/liquidator.json
+cd /opt/liquidator/app
+sudo docker compose up -d --build
+sudo docker compose logs -f
+```
+
+Update: `sudo git pull && sudo docker compose up -d --build`.
+
+One-off commands run in the same image, so the host needs no Node:
+
+```bash
+sudo docker compose run --rm liquidator node dist/scripts/preflight.js
+sudo docker compose run --rm liquidator node dist/scripts/setup-accounts.js --confirm
+```
+
+[`docker-compose.yml`](../docker-compose.yml) mounts the key read-only and
+overrides `KEYPAIR_PATH` to point at it, so the `.env` value does not matter. The
+container publishes no ports, has a read-only filesystem, no capabilities, a 1 GB
+memory cap and rotated logs, and restarts always. The image holds neither `.env`
+nor the key.
+
+#### systemd
 
 ```bash
 sudo git clone git@github.com:Nysa-Finance/Liquidator.git /opt/liquidator/app

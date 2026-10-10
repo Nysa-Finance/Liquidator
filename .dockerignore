@@ -1,0 +1,7 @@
+.env
+*.json.key
+.git
+node_modules
+dist
+fixtures
+docs
