@@ -32,6 +32,11 @@ id liquidator >/dev/null 2>&1 || useradd --system --home-dir "$BASE" --shell /us
 chown -R liquidator:liquidator "$BASE"
 chmod 700 "$BASE"
 
+# updates are pulled as root into a checkout the service user owns; without
+# this git refuses with "dubious ownership"
+git config --system --get-all safe.directory 2>/dev/null | grep -qx "$APP" \
+  || git config --system --add safe.directory "$APP"
+
 echo "== dependencies and build"
 cd "$APP"
 # runuser ships with util-linux; minimal images have no sudo
