@@ -1,52 +1,57 @@
-# systemd unit for running the bot continuously.
+# systemd unit for the liquidator. Installed by deploy/install.sh.
 #
-#   sudo cp deploy/liquidator.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now liquidator
+# Layout on the server:
+#   /opt/liquidator/app               the git checkout (built into dist/)
+#   /opt/liquidator/.env              settings, mode 600, no inline comments
+#   /opt/liquidator/liquidator.json   the hot key, mode 600
+#
+#   sudo systemctl restart liquidator
 #   journalctl -u liquidator -f
-#
-# Adjust User, WorkingDirectory and the node path before installing.
 
 [Unit]
-Description=Kamino USDY/USDC liquidation bot
+Description=Kamino USDY/USDC liquidator
 Documentation=https://github.com/Nysa-Finance/Liquidator
 After=network-online.target
 Wants=network-online.target
+# Never stop restarting. The bot already backs off on its own while the RPC is
+# failing; a unit that gives up after a few quick deaths stays off until a
+# human notices, which is the one outcome a liquidator cannot afford.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=liquidator
 Group=liquidator
-WorkingDirectory=/opt/liquidator
+WorkingDirectory=/opt/liquidator/app
 EnvironmentFile=/opt/liquidator/.env
+Environment=NODE_ENV=production
 
-# npx/tsx is fine for development; in production run the compiled output so a
-# transpile error cannot take the process down mid-flight.
-ExecStartPre=/usr/bin/npm run build
+# The compiled build, made at install time. Building on every start would make
+# a broken checkout take the running bot down with it.
 ExecStart=/usr/bin/node dist/src/index.js
 
-# Always come back up, but back off so a crash loop does not hammer the RPC.
 Restart=always
-RestartSec=10
-StartLimitIntervalSec=300
-StartLimitBurst=10
+RestartSec=30
+# SIGTERM lets the round in flight finish; the bot exits within a second.
+TimeoutStopSec=30
 
-# Logs go to the journal; rotate there rather than writing files.
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=liquidator
 
-# The process only needs its own directory and outbound network.
+# It reads its files and talks to the network. Nothing else.
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/liquidator
 ProtectKernelTunables=true
+ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
-MemoryMax=2G
+RestrictRealtime=true
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target

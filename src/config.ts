@@ -172,6 +172,10 @@ export const CFG = {
   get maxSnapshotAgeSlots() { return num('MAX_SNAPSHOT_AGE_SLOTS', 4); },
   get scanIntervalMs() { return num('SCAN_INTERVAL_MS', 2000); },
   get lookupTable() { return process.env.LOOKUP_TABLE ?? ''; },
+  get telegramBotToken() { return process.env.TELEGRAM_BOT_TOKEN ?? ''; },
+  get telegramChatId() { return process.env.TELEGRAM_CHAT_ID ?? ''; },
+  /** Below this the wallet cannot pay for many more sends; alert before it runs dry. */
+  get minSolBalance() { return num('MIN_SOL_BALANCE', 0.05); },
   get logLevel() { return process.env.LOG_LEVEL ?? 'info'; },
 } as const;
 
@@ -191,6 +195,7 @@ export function validateConfig(): void {
     maxPriorityLamports: CFG.maxPriorityLamports,
     maxPriorityProfitFraction: CFG.maxPriorityProfitFraction,
     scanIntervalMs: CFG.scanIntervalMs,
+    minSolBalance: CFG.minSolBalance,
   };
 
   for (const [k, v] of Object.entries(c)) {

@@ -14,6 +14,7 @@ import {
   ORCA_POOL,
 } from './config.js';
 import { log } from './logger.js';
+import { alert } from './alert.js';
 import { loadSigner, makeRpcPool, type RpcPool } from './rpc.js';
 import { evaluate } from './eligibility.js';
 import { buildPlan } from './profit.js';
@@ -269,6 +270,10 @@ async function tick(ctx: {
           const actual = new Decimal(settled.usdcDelta.toString()).div(1e6);
           const estimated = plan.expectedProfitUsdc;
           const driftPct = estimated.isZero() ? new Decimal(0) : actual.minus(estimated).div(estimated).mul(100);
+          void alert(
+            `win:${res.signature}`,
+            `LIQUIDATED — earned ${actual.toFixed(2)} USDC (estimated ${estimated.toFixed(2)}) — https://solscan.io/tx/${res.signature}`,
+          );
           log.info(
             {
               signature: res.signature,
@@ -291,6 +296,7 @@ async function tick(ctx: {
           ? await reconcile(rpc, res.signature, ctx.signer.address, USDC_RESERVE.liquidityMint)
           : null;
         ctx.ledger.loss(settled?.feeLamports ?? 0n);
+        void alert('loss', `a liquidation did not land: ${String(res.err).slice(0, 200)}`);
         log.warn(
           {
             signature: res.signature,
@@ -324,21 +330,47 @@ async function loadLookupTable(rpc: ReturnType<RpcPool['active']>): Promise<Look
   return addrs as LookupTables;
 }
 
+/**
+ * Retries a network step with doubling waits (2 s up to 60 s per attempt,
+ * about ten minutes in all) before giving up. A provider hiccup at boot used to
+ * kill the process outright, and systemd stops restarting a unit that dies too
+ * often — one bad minute at night could leave the bot off until morning.
+ */
+async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 14): Promise<T> {
+  for (let i = 1; ; i += 1) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i >= attempts) throw e;
+      const waitMs = Math.min(2_000 * 2 ** (i - 1), 60_000);
+      log.warn({ step: label, attempt: i, retryInMs: waitMs, err: String(e) }, 'boot step failed, retrying');
+      if (i === 3) void alert(`boot:${label}`, `cannot ${label} — retrying. ${String(e).slice(0, 200)}`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+}
+
 async function main(): Promise<void> {
+  // Everything that can only be fixed by a human fails immediately: retrying a
+  // bad setting, a missing key file or a missing lookup table changes nothing.
   validateConfig();
   const pool = makeRpcPool();
   const signer = await loadSigner();
   const atas = await findAtas(signer.address);
   const pdas = await loadPdas();
+  if (!CFG.dryRun && !CFG.lookupTable) {
+    throw new Error(
+      'LOOKUP_TABLE is not set. Without it the transaction serializes past the 1232-byte ' +
+        'network limit and every send is refused. Run `npm run setup -- --confirm` first.',
+    );
+  }
 
-  const market = await KaminoMarket.load(
-    pool.active(),
-    TARGET_MARKET.address,
-    RECENT_SLOT_DURATION_MS,
-    KLEND_PROGRAM,
-    true,
-  );
-  if (!market) throw new Error(`Market ${TARGET_MARKET.address} failed to load`);
+  // Everything below talks to the network and is retried.
+  const market = await withRetry('load the market', async () => {
+    const m = await KaminoMarket.load(pool.active(), TARGET_MARKET.address, RECENT_SLOT_DURATION_MS, KLEND_PROGRAM, true);
+    if (!m) throw new Error(`Market ${TARGET_MARKET.address} failed to load`);
+    return m;
+  });
 
   log.info(
     {
@@ -350,16 +382,12 @@ async function main(): Promise<void> {
     },
     'bot starting',
   );
-  if (!CFG.dryRun) {
-    log.warn('DRY_RUN IS OFF: real transactions will be submitted');
-    if (!CFG.lookupTable) {
-      throw new Error(
-        'LOOKUP_TABLE is not set. Without it the transaction serializes past the 1232-byte ' +
-          'network limit and every send is refused. Run `npm run setup -- --confirm` first.',
-      );
-    }
-  }
-  const lookupTables = await loadLookupTable(pool.active());
+  if (!CFG.dryRun) log.warn('DRY_RUN IS OFF: real transactions will be submitted');
+  const lookupTables = await withRetry('load the lookup table', () => loadLookupTable(pool.active()));
+  void alert(
+    'started',
+    `started — ${CFG.dryRun ? 'DRY RUN, nothing is sent' : 'LIVE'} — wallet ${signer.address} — market ${TARGET_MARKET.name}`,
+  );
 
   const ctx = {
     pool,
@@ -377,29 +405,73 @@ async function main(): Promise<void> {
   // systemd sends SIGTERM on stop and on restart; finish the tick in flight
   // rather than dying mid-transaction.
   let stopping = false;
+  // The wait between rounds can stretch to a minute while the RPC is failing;
+  // a stop signal cuts it short instead of making systemd wait it out.
+  let wake: () => void = () => {};
+  const pause = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, ms);
+      wake = () => {
+        clearTimeout(t);
+        resolve();
+      };
+    });
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     process.on(sig, () => {
       if (stopping) process.exit(1);
       stopping = true;
       log.warn({ signal: sig }, 'shutting down after the current tick');
+      wake();
     });
   }
 
+  let failures = 0;
+  let lastSummary = Date.now();
+  let lastBalanceCheck = 0;
   while (!stopping) {
     try {
       await tick(ctx);
       pool.reportSuccess();
+      if (failures >= 5) void alert('rpc-recovered', `scanning again after ${failures} failed rounds`);
+      failures = 0;
     } catch (e) {
       pool.reportFailure(e);
-      log.error({ err: String(e) }, 'loop error');
+      failures += 1;
+      log.error({ err: String(e), consecutiveFailures: failures }, 'loop error');
+      if (failures === 5) void alert('rpc-down', `5 scan rounds failed in a row — ${String(e).slice(0, 200)}`);
     }
-    await new Promise((r) => setTimeout(r, CFG.scanIntervalMs));
+
+    // A wallet that runs out of SOL cannot pay fees, and every send fails.
+    if (Date.now() - lastBalanceCheck > 5 * 60_000) {
+      lastBalanceCheck = Date.now();
+      try {
+        const bal = await pool.active().getBalance(signer.address, { commitment: 'confirmed' }).send();
+        const sol = Number(bal.value) / 1e9;
+        if (sol < CFG.minSolBalance) {
+          log.warn({ sol }, 'wallet SOL balance low');
+          void alert('low-sol', `wallet ${signer.address} has ${sol.toFixed(4)} SOL — top it up`);
+        }
+      } catch (e) {
+        log.debug({ err: String(e) }, 'balance check failed');
+      }
+    }
+
+    if (Date.now() - lastSummary > 24 * 3_600_000) {
+      lastSummary = Date.now();
+      void alert('daily', `alive — ${JSON.stringify(ctx.ledger.summary())}`);
+    }
+
+    // Back off while the RPC keeps failing, so a dead provider is not hammered.
+    const waitMs = failures === 0 ? CFG.scanIntervalMs : Math.min(CFG.scanIntervalMs * 2 ** failures, 60_000);
+    await pause(waitMs);
   }
   log.info({ ledger: ctx.ledger.summary() }, 'stopped');
+  await alert('stopped', `stopped — ${JSON.stringify(ctx.ledger.summary())}`);
 }
 
-void main().catch((e) => {
+void main().catch(async (e) => {
   log.fatal({ err: String(e) }, 'exiting');
+  await alert('fatal', `exited: ${String(e).slice(0, 300)}`);
   process.exit(1);
 });
 

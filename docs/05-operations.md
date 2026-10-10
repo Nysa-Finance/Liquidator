@@ -75,7 +75,8 @@ Today: **0 obligations**, no debt. A liquidator with nothing to liquidate has no
 |---|---|---|---|
 | B1 | **Run `npm run setup -- --confirm`** | creates the three token accounts and the lookup table, then prints `LOOKUP_TABLE=` for the `.env`. Measured: the uncompressed transaction is **1509 bytes** against a **1232-byte** limit, so without the table every send is refused | one-off, on-chain, spends rent |
 | B2 | **Wire `scanner.ts` into the loop** | `index.ts` still uses the SDK method that downloads whole positions: fine on an empty market, unusable on an active one | `src/index.ts` |
-| B3 | **Alerting** | there is no health endpoint and no metrics; a stopped bot is silent | new |
+
+Alerting, once listed here, is done: see *Monitoring* below.
 
 B1 is enforced rather than remembered: with `DRY_RUN=false` and no
 `LOOKUP_TABLE`, the bot refuses to start.
@@ -130,24 +131,57 @@ leave USDC sitting on the hot key.
 A VPS close to the validators (Frankfurt or Amsterdam for Europe) cuts tens of
 milliseconds. Nothing powerful is needed: 2 vCPU and 2 GB.
 
-A ready systemd unit lives at [`deploy/liquidator.service`](../deploy/liquidator.service):
+Layout on the server (Debian/Ubuntu):
+
+```
+/opt/liquidator/app               the git checkout, built into dist/
+/opt/liquidator/.env              settings, mode 600, no trailing comments on a line
+/opt/liquidator/liquidator.json   the hot key, mode 600
+```
+
+First install:
 
 ```bash
-sudo cp deploy/liquidator.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now liquidator
+sudo git clone git@github.com:Nysa-Finance/Liquidator.git /opt/liquidator/app
+# copy .env and liquidator.json into /opt/liquidator/
+sudo bash /opt/liquidator/app/deploy/install.sh
+sudo systemctl start liquidator
 journalctl -u liquidator -f
 ```
 
-It runs the compiled output rather than `tsx`, so a transpile error cannot take
-the process down mid-flight; it restarts on failure with a back-off that stops a
-crash loop from hammering the RPC; and it is confined with `ProtectSystem=strict`
-plus a 2 GB memory ceiling.
+Update:
+
+```bash
+sudo git -C /opt/liquidator/app pull
+sudo bash /opt/liquidator/app/deploy/install.sh
+sudo systemctl restart liquidator
+```
+
+[`deploy/install.sh`](../deploy/install.sh) is idempotent: Node 24 and npm 12,
+a `liquidator` system user, `npm ci`, the build, permissions on the two secret
+files, and the systemd unit. It never starts the bot and never touches `.env` or
+the key.
+
+The [unit](../deploy/liquidator.service) runs the compiled build, made once at
+install time, so a broken checkout cannot take the running bot down. It restarts
+forever (`StartLimitIntervalSec=0`, 30 s between attempts), is confined with
+`ProtectSystem=strict`, and capped at 1 GB.
 
 ### Monitoring
 
-Minimum viable: alert if the process dies, if five transactions fail in a row, if
-the landing rate drops below 30%. Logs to file, rotated.
+The bot is built to run unattended:
+
+- **boot** retries the RPC calls it needs (up to ~10 minutes, doubling waits)
+  instead of dying on a rate limit;
+- **the loop** never exits on an RPC error: it backs off (up to 60 s) and keeps
+  going;
+- **SIGTERM** stops it within a second, between ticks.
+
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to get alerts: start and stop,
+fatal error, RPC down (5 failed ticks in a row) and recovered, wallet SOL below
+`MIN_SOL_BALANCE` (checked every 5 minutes), every liquidation won or lost, and a
+daily summary. The same alert is not repeated within 10 minutes. Without the two
+settings alerts are off and everything is still in `journalctl`.
 
 ## 4. Go-live sequence
 
