@@ -147,7 +147,7 @@ runs containers; pick systemd on a machine dedicated to the bot.
 ```bash
 sudo git clone git@github.com:Nysa-Finance/Liquidator.git /opt/liquidator/app
 # copy .env and liquidator.json into /opt/liquidator/
-sudo chown 1000:1000 /opt/liquidator/liquidator.json   # the container's user
+sudo chown 10001:10001 /opt/liquidator/liquidator.json   # the container's user
 sudo chmod 400 /opt/liquidator/liquidator.json
 cd /opt/liquidator/app
 sudo docker compose up -d --build

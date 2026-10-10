@@ -3,7 +3,7 @@
 # Layout on the server:
 #   /opt/liquidator/app               this checkout
 #   /opt/liquidator/.env              settings (no trailing comments on a line)
-#   /opt/liquidator/liquidator.json   the hot key, owned by uid 1000, mode 400
+#   /opt/liquidator/liquidator.json   the hot key, owned by uid 10001, mode 400
 #
 #   docker compose up -d --build      start, or apply an update after git pull
 #   docker compose logs -f            follow the logs
@@ -12,6 +12,9 @@ services:
     build: .
     image: liquidator:local
     container_name: liquidator
+    # A uid no host account has (Ubuntu's first user is 1000), so the key file
+    # is readable by this container and by nobody else but root.
+    user: "10001:10001"
     restart: always
     env_file: ../.env
     environment:
