@@ -5,8 +5,10 @@
 #   /opt/liquidator/.env              settings (no trailing comments on a line)
 #   /opt/liquidator/liquidator.json   the hot key, owned by uid 10001, mode 400
 #
-#   docker compose up -d --build      start, or apply an update after git pull
-#   docker compose logs -f            follow the logs
+#   /opt/liquidator is mode 700: run compose by file path, not after a cd
+#   alias liq='sudo docker compose -f /opt/liquidator/app/docker-compose.yml'
+#   liq up -d --build      start, or apply an update after git pull
+#   liq logs -f            follow the logs
 services:
   liquidator:
     build: .

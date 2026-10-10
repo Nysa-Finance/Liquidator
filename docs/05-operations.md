@@ -149,18 +149,21 @@ sudo git clone git@github.com:Nysa-Finance/Liquidator.git /opt/liquidator/app
 # copy .env and liquidator.json into /opt/liquidator/
 sudo chown 10001:10001 /opt/liquidator/liquidator.json   # the container's user
 sudo chmod 400 /opt/liquidator/liquidator.json
-cd /opt/liquidator/app
-sudo docker compose up -d --build
-sudo docker compose logs -f
+alias liq='sudo docker compose -f /opt/liquidator/app/docker-compose.yml'
+liq up -d --build
+liq logs -f
 ```
 
-Update: `sudo git pull && sudo docker compose up -d --build`.
+`/opt/liquidator` is mode 700, so a non-root login cannot `cd` into it: point
+compose at the file instead (the alias, worth adding to `~/.bashrc`).
+
+Update: `sudo git -C /opt/liquidator/app pull && liq up -d --build`.
 
 One-off commands run in the same image, so the host needs no Node:
 
 ```bash
-sudo docker compose run --rm liquidator node dist/scripts/preflight.js
-sudo docker compose run --rm liquidator node dist/scripts/setup-accounts.js --confirm
+liq run --rm liquidator node dist/scripts/preflight.js
+liq run --rm liquidator node dist/scripts/setup-accounts.js --confirm
 ```
 
 [`docker-compose.yml`](../docker-compose.yml) mounts the key read-only and
