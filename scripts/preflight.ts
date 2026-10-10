@@ -16,6 +16,7 @@ import { readFile } from 'node:fs/promises';
 import { address, createKeyPairSignerFromBytes, type Address } from '@solana/kit';
 import { LendingMarket, Reserve, getAssociatedTokenAddress } from '@kamino-finance/klend-sdk';
 import {
+  CFG,
   FLASH_SOURCE,
   KLEND_PROGRAM,
   ORCA_POOL,
@@ -295,7 +296,7 @@ async function main() {
   } else {
     const lamports = await rpc.getBalance(wallet, { commitment: 'confirmed' }).send();
     const sol = Number(lamports.value) / 1e9;
-    add(sol >= 0.1, true, 'SOL for fees and rent', `${sol.toFixed(4)} SOL on ${wallet}`);
+    add(sol >= CFG.minSolBalance, true, 'SOL for fees and rent', `${sol.toFixed(4)} SOL on ${wallet} (min ${CFG.minSolBalance}, MIN_SOL_BALANCE)`);
 
     if (IS_TARGET) {
       const atas = {
