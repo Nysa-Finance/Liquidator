@@ -1,5 +1,5 @@
 import { Decimal } from 'decimal.js';
-import { KaminoMarket, getCurrentLedgerInstant, type KaminoObligation } from '@kamino-finance/klend-sdk';
+import { KaminoMarket, type KaminoObligation } from '@kamino-finance/klend-sdk';
 import { address, fetchAddressesForLookupTables, type Address } from '@solana/kit';
 import {
   CFG,
@@ -15,7 +15,7 @@ import {
 } from './config.js';
 import { log } from './logger.js';
 import { alert } from './alert.js';
-import { loadSigner, makeRpcPool, type RpcPool } from './rpc.js';
+import { ledgerInstant, loadSigner, makeRpcPool, type RpcPool } from './rpc.js';
 import { evaluate } from './eligibility.js';
 import { buildPlan } from './profit.js';
 import { loadOrcaContext } from './build/orca.js';
@@ -61,9 +61,9 @@ async function tick(ctx: {
   ledger: Ledger;
 }): Promise<void> {
   const rpc = ctx.pool.active();
-  // slot and blockTime read at the same commitment: one coherent snapshot,
-  // not two disconnected reads
-  const instant = await getCurrentLedgerInstant(rpc, 'processed');
+  // slot and blockTime read together: one coherent snapshot, not two
+  // disconnected reads
+  const instant = await ledgerInstant(rpc);
   const slot = instant.slot;
   const nowSeconds = BigInt(instant.blockTime);
 
