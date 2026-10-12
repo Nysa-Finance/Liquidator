@@ -18,7 +18,6 @@ import { loadWorld, setScopePrice, type World } from './world.js';
 // The two reserves read different feeds since USDY was repointed, so each
 // price is written where that reserve will actually look for it.
 const [USDY_IDX] = USDY_RESERVE.scopeChain;
-const [USDC_IDX, USDC_IDX_2] = USDC_RESERVE.scopeChain;
 
 async function sendIxs(world: World, signer: Awaited<ReturnType<typeof generateKeyPairSigner>>, ixs: Parameters<typeof appendTransactionMessageInstructions>[0]) {
   const blockhash = world.svm.latestBlockhash();
@@ -53,8 +52,7 @@ test('refreshReserve applies the Scope prices we write ourselves', async () => {
 
   // Realistic prices, stamped with the world's current slot/timestamp.
   setScopePrice(world, USDY_RESERVE.scopeFeed, USDY_IDX!, 1.1435);
-  setScopePrice(world, USDC_RESERVE.scopeFeed, USDC_IDX!, 1.0);
-  setScopePrice(world, USDC_RESERVE.scopeFeed, USDC_IDX_2!, 1.0);
+  for (const i of USDC_RESERVE.scopeChain) setScopePrice(world, USDC_RESERVE.scopeFeed, i, 1.0);
 
   const res = await sendIxs(world, signer, [
     refreshReserveIx(USDY_RESERVE.address, TARGET_MARKET.address, USDY_RESERVE.scopeFeed),

@@ -30,7 +30,6 @@ import { openPosition, refreshPosition, seedUsdcLiquidity, send } from './setup-
 // Each reserve names its own feed and entry; they stopped sharing one when the
 // curator repointed USDY.
 const [USDY_IDX] = USDY_RESERVE.scopeChain;
-const [USDC_IDX, USDC_IDX_2] = USDC_RESERVE.scopeChain;
 
 const USDY_START = 1.1435;
 /** Enough to cross a 95% liquidation threshold from a 92% LTV borrow. */
@@ -42,8 +41,7 @@ const SEED_USDC = 200_000_000_000n; // lender-supplied borrowable liquidity
 
 function setPrices(world: World, usdy: number) {
   setScopePrice(world, USDY_RESERVE.scopeFeed, USDY_IDX!, usdy);
-  setScopePrice(world, USDC_RESERVE.scopeFeed, USDC_IDX!, 1.0);
-  setScopePrice(world, USDC_RESERVE.scopeFeed, USDC_IDX_2!, 1.0);
+  for (const i of USDC_RESERVE.scopeChain) setScopePrice(world, USDC_RESERVE.scopeFeed, i, 1.0);
 }
 
 function obligationLtv(world: World, obligation: Parameters<typeof world.svm.getAccount>[0]) {

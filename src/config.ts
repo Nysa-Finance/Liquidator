@@ -82,7 +82,9 @@ export const USDC_RESERVE = {
   feeVault: address('HS5RA3CPZsUvgsKTsgn17tUqKMXiQcCCXK6tiJGfaj1G'),
   collateralMint: address('Eyq6nikS6Mh5zsG2iLCLAB9Rz2dUEsxR5aqMAdxCdQLZ'),
   scopeFeed: address('3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C'),
-  scopeChain: [20, 230],
+  // Was [20, 230] until ~10 Oct 2026; index 230 of the feed is now empty and
+  // the curator dropped it. Read from chain by the SDK; kept for the drift test.
+  scopeChain: [20],
   borrowFactorPct: 100,
   hasFarms: false,
 } as const;
