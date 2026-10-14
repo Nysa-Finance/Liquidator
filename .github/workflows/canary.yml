@@ -13,6 +13,10 @@ on:
     - cron: '17 6 * * *' # daily, 06:17 UTC
   workflow_dispatch:
 
+# Read the code, nothing else: no workflow here writes to the repository.
+permissions:
+  contents: read
+
 jobs:
   canary:
     name: live read-only checks

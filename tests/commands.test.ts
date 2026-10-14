@@ -9,7 +9,7 @@ import { maySend, mode, note, status } from '../src/status.js';
  * to a riskier mode than .env allows.
  */
 
-const CHAT = '-1004488351262';
+const CHAT = '-1001234567890';
 const ADMIN = 42;
 const deps: Deps = {
   rpcHost: () => 'rpc.example.com',
