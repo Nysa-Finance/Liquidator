@@ -28,7 +28,18 @@ export async function alert(key: string, text: string): Promise<void> {
       body: JSON.stringify({ chat_id: chat, text: `[liquidator] ${text}`, disable_web_page_preview: true }),
       signal: AbortSignal.timeout(5_000),
     });
-    if (!res.ok) log.warn({ key, status: res.status }, 'telegram alert refused');
+    if (!res.ok) {
+      // Telegram says why (never echoing the token): "chat not found", or a
+      // group upgraded to a supergroup along with the new chat id to use.
+      const body = (await res.json().catch(() => ({}))) as {
+        description?: string;
+        parameters?: { migrate_to_chat_id?: number };
+      };
+      log.warn(
+        { key, status: res.status, reason: body.description, newChatId: body.parameters?.migrate_to_chat_id },
+        'telegram alert refused',
+      );
+    }
   } catch (e) {
     log.warn({ key, err: String(e) }, 'telegram alert failed');
   }
