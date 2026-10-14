@@ -15,10 +15,12 @@ import {
 } from './config.js';
 import { log } from './logger.js';
 import { alert } from './alert.js';
+import { maySend, mode, note, status, type MarketView } from './status.js';
+import { startCommands } from './commands.js';
 import { ledgerInstant, loadSigner, makeRpcPool, type RpcPool } from './rpc.js';
 import { evaluate } from './eligibility.js';
 import { buildPlan } from './profit.js';
-import { loadOrcaContext } from './build/orca.js';
+import { loadOrcaContext, spotPrice } from './build/orca.js';
 import { loadPdas } from './build/klend.js';
 import { buildLiquidationMessage, type Atas, type LookupTables } from './build/tx.js';
 import {
@@ -36,6 +38,7 @@ import {
 } from './execute.js';
 
 const RECENT_SLOT_DURATION_MS = 450;
+const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 const DEFAULT_CU_LIMIT = 420_000;
 
 async function findAtas(owner: Address): Promise<Atas> {
@@ -66,6 +69,7 @@ async function tick(ctx: {
   const instant = await ledgerInstant(rpc);
   const slot = instant.slot;
   const nowSeconds = BigInt(instant.blockTime);
+  status.lastSlot = slot;
 
   await ctx.market.refreshAll();
 
@@ -85,6 +89,7 @@ async function tick(ctx: {
       { collateralFarm: collReserve.state.farmCollateral, debtFarm: debtReserve.state.farmDebt },
       'a farm was attached to the collateral or debt side — liquidateV2 would revert, refusing to plan',
     );
+    note('refusing to plan: a farm was attached to a reserve');
     return;
   }
 
@@ -100,9 +105,33 @@ async function tick(ctx: {
   const obligations: KaminoObligation[] = await ctx.market.getAllObligationsForMarket(instant);
   log.debug({ slot: slot.toString(), obligations: obligations.length }, 'scan');
 
+  // What /market shows. Ranked by how close each position is to its
+  // liquidation LTV; positions without debt cannot be liquidated at all.
+  const closeness = (o: MarketView['top'][number]) => (o.liquidationLtv > 0 ? o.ltv / o.liquidationLtv : 0);
+  const view: MarketView = {
+    at: Date.now(),
+    obligations: obligations.length,
+    top: obligations
+      .map((o) => ({
+        address: String(o.obligationAddress),
+        ltv: o.loanToValue().toNumber(),
+        liquidationLtv: o.liquidationLtv().toNumber(),
+        debtUsd: o.refreshedStats.userTotalBorrow.toNumber(),
+      }))
+      .filter((o) => o.debtUsd > 0)
+      .sort((a, b) => closeness(b) - closeness(a))
+      .slice(0, 3),
+    usdyInVault: collReserve.getLiquidityAvailableAmount().div(10 ** USDY_RESERVE.decimals).toNumber(),
+    flashUsdc: flashAvailable.div(10 ** USDC_RESERVE.decimals).toNumber(),
+    orcaPrice: null,
+    oraclePrice: collReserve.getOracleMarketPrice().div(debtReserve.getOracleMarketPrice()).toNumber(),
+  };
+  status.market = view;
+
   if (obligations.length === 0) return;
 
   const orca = await loadOrcaContext(rpc, slot);
+  view.orcaPrice = spotPrice(orca.pool);
 
   for (const ob of obligations) {
     const key = ob.obligationAddress as string;
@@ -135,6 +164,7 @@ async function tick(ctx: {
     });
     if (!planRes.ok) {
       log.debug({ obligation: key, reason: planRes.reason }, 'plan rejected');
+      note(`${short(key)} liquidatable, skipped: ${planRes.reason}`);
       continue;
     }
     const plan = planRes.plan;
@@ -174,6 +204,7 @@ async function tick(ctx: {
           { obligation: key, err: sim.err, logs: sim.logs.slice(-8) },
           'simulation failed — not submitting',
         );
+        note(`${short(key)} simulation failed: ${JSON.stringify(sim.err).slice(0, 120)}`);
         continue;
       }
 
@@ -186,6 +217,7 @@ async function tick(ctx: {
           { obligation: key, simProfitUsdc: simProfitUsdc.toString() },
           'simulated profit below threshold — not submitting',
         );
+        note(`${short(key)} simulated profit ${simProfitUsdc.toFixed(2)} USDC, below ${CFG.minProfitUsdc}`);
         continue;
       }
 
@@ -202,10 +234,12 @@ async function tick(ctx: {
         'plan accepted',
       );
 
-      if (CFG.dryRun) {
-        log.info('DRY_RUN enabled: nothing submitted');
+      if (!maySend()) {
+        log.info({ mode: mode() }, 'not submitting');
+        note(`${short(key)} plan accepted, expected ${plan.expectedProfitUsdc.toFixed(2)} USDC — not sent (${mode()})`);
         continue;
       }
+      note(`${short(key)} plan accepted, expected ${plan.expectedProfitUsdc.toFixed(2)} USDC — sending`);
 
       // rebuild with measured CU and the chosen priority fee
       const cuLimit = Math.ceil(sim.unitsConsumed * 1.15);
@@ -225,6 +259,7 @@ async function tick(ctx: {
           { obligation: key, snapshotSlot: slot.toString(), nowSlot: nowSlot.toString() },
           'snapshot aged out while planning — dropping instead of sending stale',
         );
+        note(`${short(key)} dropped: prices too old by the time the plan was ready`);
         continue;
       }
 
@@ -239,6 +274,7 @@ async function tick(ctx: {
           { obligation: key, profitAtRealCost: profitAtRealCost.toFixed(6), feeUsdc: realCost.toFixed(6) },
           'no longer clears the floor once the real fee is priced in',
         );
+        note(`${short(key)} dropped: with the real fee it earns ${profitAtRealCost.toFixed(2)} USDC`);
         continue;
       }
 
@@ -268,6 +304,7 @@ async function tick(ctx: {
         if (settled) {
           ctx.ledger.win(settled);
           const actual = new Decimal(settled.usdcDelta.toString()).div(1e6);
+          note(`${short(key)} LIQUIDATED: +${actual.toFixed(2)} USDC`);
           const estimated = plan.expectedProfitUsdc;
           const driftPct = estimated.isZero() ? new Decimal(0) : actual.minus(estimated).div(estimated).mul(100);
           void alert(
@@ -296,6 +333,7 @@ async function tick(ctx: {
           ? await reconcile(rpc, res.signature, ctx.signer.address, USDC_RESERVE.liquidityMint)
           : null;
         ctx.ledger.loss(settled?.feeLamports ?? 0n);
+        note(`${short(key)} did not land: ${String(res.err).slice(0, 120)}`);
         void alert('loss', `a liquidation did not land: ${String(res.err).slice(0, 200)}`);
         log.warn(
           {
@@ -311,6 +349,7 @@ async function tick(ctx: {
       ctx.pool.reportFailure(e);
       ctx.quarantine.record(key, slot, String(e));
       log.error({ obligation: key, err: String(e) }, 'execution error');
+      note(`${short(key)} execution error: ${String(e).slice(0, 120)}`);
     } finally {
       ctx.guard.release(key);
     }
@@ -404,6 +443,26 @@ async function main(): Promise<void> {
     lookupTables,
     ledger: new Ledger(),
   };
+  note(`started in ${mode()}`);
+
+  const stopCommands = startCommands({
+    rpcHost: () => pool.activeHost(),
+    wallet: async () => {
+      const rpc = pool.active();
+      const token = (ata: Address) =>
+        rpc.getTokenAccountBalance(ata).send().then((r) => Number(r.value.uiAmountString ?? 0)).catch(() => 0);
+      try {
+        const [lamports, usdc, usdy] = await Promise.all([
+          rpc.getBalance(signer.address, { commitment: 'confirmed' }).send(),
+          token(atas.usdc),
+          token(atas.usdy),
+        ]);
+        return { address: signer.address, sol: Number(lamports.value) / 1e9, usdc, usdy };
+      } catch {
+        return null;
+      }
+    },
+  });
 
   // systemd sends SIGTERM on stop and on restart; finish the tick in flight
   // rather than dying mid-transaction.
@@ -424,6 +483,7 @@ async function main(): Promise<void> {
       if (stopping) process.exit(1);
       stopping = true;
       log.warn({ signal: sig }, 'shutting down after the current tick');
+      stopCommands();
       wake();
     });
   }
@@ -435,12 +495,18 @@ async function main(): Promise<void> {
     try {
       await tick(ctx);
       pool.reportSuccess();
+      status.lastScanAt = Date.now();
+      status.failures = 0;
       if (failures >= 5) void alert('rpc-recovered', `scanning again after ${failures} failed rounds`);
       failures = 0;
     } catch (e) {
       pool.reportFailure(e);
       failures += 1;
+      status.failures = failures;
       log.error({ err: String(e), consecutiveFailures: failures }, 'loop error');
+      // up to the first ';' so the same error repeated counts up in /last
+      // instead of filling it (RPC messages carry a varying encoded tail)
+      note(`scan failed: ${String(e).split(';')[0]!.slice(0, 100)}`);
       if (failures === 5) void alert('rpc-down', `5 scan rounds failed in a row — ${String(e).slice(0, 200)}`);
     }
 
@@ -452,6 +518,7 @@ async function main(): Promise<void> {
         const sol = Number(bal.value) / 1e9;
         if (sol < CFG.minSolBalance) {
           log.warn({ sol }, 'wallet SOL balance low');
+          note(`wallet SOL low: ${sol.toFixed(4)}`);
           void alert('low-sol', `wallet ${signer.address} has ${sol.toFixed(4)} SOL — top it up`);
         }
       } catch (e) {

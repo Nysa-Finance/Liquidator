@@ -176,6 +176,10 @@ export const CFG = {
   get lookupTable() { return process.env.LOOKUP_TABLE ?? ''; },
   get telegramBotToken() { return process.env.TELEGRAM_BOT_TOKEN ?? ''; },
   get telegramChatId() { return process.env.TELEGRAM_CHAT_ID ?? ''; },
+  /** Telegram user ids allowed to /pause and /resume; empty disables both. */
+  get telegramAdminIds() {
+    return (process.env.TELEGRAM_ADMIN_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  },
   /** Below this the wallet cannot pay for many more sends; alert before it runs dry. */
   get minSolBalance() { return num('MIN_SOL_BALANCE', 0.05); },
   get logLevel() { return process.env.LOG_LEVEL ?? 'info'; },

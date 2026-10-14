@@ -222,6 +222,23 @@ fatal error, RPC down (5 failed ticks in a row) and recovered, wallet SOL below
 daily summary. The same alert is not repeated within 10 minutes. Without the two
 settings alerts are off and everything is still in `journalctl`.
 
+The same chat takes commands, read by long polling (no port opened):
+
+| Command | Who | Answers |
+|---|---|---|
+| `/status` | anyone in the chat | mode, uptime, last scan (flags a stalled loop), failed scans in a row, RPC host, SOL |
+| `/market` | anyone | positions closest to liquidation, USDY in the vault, flash liquidity, Orca vs oracle price |
+| `/wallet` | anyone | SOL, USDC, USDY on the bot wallet |
+| `/last` | anyone | last 10 notable events: plans accepted or skipped and why, sends, errors |
+| `/pause` | `TELEGRAM_ADMIN_IDS` | stops submissions at once; scanning continues |
+| `/resume CONFIRM` | `TELEGRAM_ADMIN_IDS` | back to the mode `.env` sets |
+
+From Telegram the bot can only become more careful: `/resume` cannot turn on
+sending that `.env` has off, and nothing moves funds, changes thresholds or
+shows a secret. Messages from other chats are ignored, and commands typed while
+the bot was down are dropped rather than replayed. A pause lives in memory: a
+restart comes back in the `.env` mode, and says so in the `started` alert.
+
 ## 4. Go-live sequence
 
 No step is skipped, and each has a verifiable exit condition.

@@ -57,6 +57,7 @@ export async function ledgerInstant(
  */
 export class RpcPool {
   private readonly clients: RpcClient[];
+  private readonly hosts: string[];
   private idx = 0;
   private strikes = 0;
 
@@ -64,10 +65,16 @@ export class RpcPool {
     const valid = urls.filter((u) => u.length > 0);
     if (valid.length === 0) throw new Error('No RPC endpoint configured');
     this.clients = valid.map((u) => createSolanaRpc(u));
+    this.hosts = valid.map((u) => new URL(u).host);
   }
 
   active(): RpcClient {
     return this.clients[this.idx]!;
+  }
+
+  /** Host of the endpoint in use, without the path or query that carry API keys. */
+  activeHost(): string {
+    return `${this.hosts[this.idx]!}${this.idx === 0 ? '' : ' (secondary)'}`;
   }
 
   /** Every configured endpoint, for idempotent broadcast of a signed transaction. */
