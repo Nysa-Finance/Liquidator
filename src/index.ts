@@ -378,6 +378,9 @@ async function main(): Promise<void> {
       market: TARGET_MARKET.address,
       marketName: TARGET_MARKET.name,
       dryRun: CFG.dryRun,
+      // off is silent otherwise: a missing token or chat id would look like
+      // Telegram simply not delivering
+      telegramAlerts: Boolean(CFG.telegramBotToken && CFG.telegramChatId),
       atas,
     },
     'bot starting',
