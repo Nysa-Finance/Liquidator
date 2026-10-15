@@ -2,9 +2,15 @@
 
 ## Reporting a vulnerability
 
-Report privately through GitHub: the repository's **Security** tab, then
-**Report a vulnerability**. Please do not open a public issue, pull request or
-discussion for a vulnerability.
+Report privately to the maintainer, by direct message:
+
+- Telegram: **[@markinho22](https://t.me/markinho22)**
+- Discord: **marcom4085**
+
+Please do not open a public issue, pull request or discussion for a
+vulnerability. Check the handle exactly before you write: these are the only
+two contacts, and anyone else claiming to collect reports for this project is
+not us.
 
 Include what you found, how to reproduce it, and what an attacker could do with
 it. **Never send private keys, seed phrases or API keys**, yours or anyone
