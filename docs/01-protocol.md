@@ -271,7 +271,7 @@ USDY reserve `rpTGWR3JDjjPfXLCg5Fx1GpSdUxPt1pxW7fwXGUT6js`:
 |---|---|
 | `loan_to_value_pct` | 90 (lowered from 92 on 29 Sep 2026) |
 | `liquidation_threshold_pct` | **95** |
-| `min_liquidation_bonus_bps` | **200** |
+| `min_liquidation_bonus_bps` | **300** (200 until 15 Oct 2026) |
 | `max_liquidation_bonus_bps` | **500** |
 | `bad_debt_liquidation_bonus_bps` | 10 |
 | `protocol_liquidation_fee_pct` | **0** |

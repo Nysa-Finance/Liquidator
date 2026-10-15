@@ -65,7 +65,8 @@ export const USDY_RESERVE = {
   scopeChain: [406],
   loanToValuePct: 90,
   liquidationThresholdPct: 95,
-  minLiquidationBonusBps: 200,
+  // 200 until 15 Oct 2026. The bot reads the live value; this is for the drift test.
+  minLiquidationBonusBps: 300,
   maxLiquidationBonusBps: 500,
   protocolLiquidationFeePct: 0,
   borrowFactorPct: 100,

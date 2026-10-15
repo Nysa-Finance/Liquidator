@@ -85,7 +85,7 @@ As of mid-October 2026; the canary re-checks the parameters daily.
 
 | | |
 |---|---|
-| USDY liquidation bonus | **200–500 bps** |
+| USDY liquidation bonus | **300–500 bps** (minimum raised from 200 on 15 Oct 2026) |
 | Close factor | **25%** (100% above the insolvency LTV) |
 | Flash loan fee (Main Market USDC) | **0.001%** (`flash_loan_fee_sf = 11529215046068`, 2^60 scale) |
 | Flash loan liquidity | **~6M USDC** (varies) |
