@@ -51,7 +51,7 @@ test('the USDY oracle reports a real price', async () => {
   assert.ok(
     price > 0.5 && price < 5,
     `Scope index ${idx} reads ${price} USD — not a USDY price (expected ~1.14). ` +
-      `Kamino points retired reserves at index 3; the real USDY price is at index 79.`,
+      `Kamino points retired reserves at index 3; USDY is priced at index 406 of feed 3t4JZcue….`,
   );
   assert.ok(
     age < Number(usdy.config.tokenInfo.maxAgePriceSeconds),

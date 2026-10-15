@@ -4,7 +4,9 @@ import {
   depositReserveLiquidity,
   depositReserveLiquidityAndObligationCollateralV2,
   initObligation,
+  initReferrerTokenState,
   initUserMetadata,
+  referrerTokenStatePda,
   refreshObligation,
   refreshReserve,
   userMetadataPda,
@@ -109,7 +111,52 @@ export async function seedUsdcLiquidity(world: World, amount: bigint): Promise<v
   ], 'seed USDC liquidity');
 }
 
-export type Position = { owner: KeyPairSigner; obligation: Address };
+export type Position = {
+  owner: KeyPairSigner;
+  obligation: Address;
+  /** the referrer's token state for the USDC borrow; empty without a referrer */
+  referrerTokenStates: Address[];
+};
+
+/**
+ * Makes `referrer` a valid referrer on the USDC reserve: its own user metadata
+ * (which a borrower's metadata points at) and its token state for the reserve
+ * (which every borrow and refresh of a referred obligation must pass).
+ */
+async function setUpReferrer(world: World, referrer: KeyPairSigner): Promise<{ metadata: Address; usdcState: Address }> {
+  world.svm.airdrop(referrer.address, 10_000_000_000n as never);
+  const [metadata] = await userMetadataPda(referrer.address, KLEND_PROGRAM);
+  const usdcState = await referrerTokenStatePda(referrer.address, USDC_RESERVE.address, KLEND_PROGRAM);
+  await send(world, referrer, [
+    initUserMetadata(
+      { userLookupTable: SYSTEM_PROGRAM },
+      {
+        owner: referrer,
+        feePayer: referrer,
+        userMetadata: metadata,
+        referrerUserMetadata: none<Address>(),
+        rent: RENT,
+        systemProgram: SYSTEM_PROGRAM,
+      },
+      undefined,
+      KLEND_PROGRAM,
+    ) as unknown as Instruction,
+    initReferrerTokenState(
+      {
+        payer: referrer,
+        lendingMarket: TARGET_MARKET.address,
+        reserve: USDC_RESERVE.address,
+        referrer: referrer.address,
+        referrerTokenState: usdcState,
+        rent: RENT,
+        systemProgram: SYSTEM_PROGRAM,
+      },
+      undefined,
+      KLEND_PROGRAM,
+    ) as unknown as Instruction,
+  ], 'set up referrer');
+  return { metadata, usdcState };
+}
 
 /**
  * Recomputes the obligation's aggregate values at current prices.
@@ -118,7 +165,12 @@ export type Position = { owner: KeyPairSigner; obligation: Address };
  * its own leaves them stale — reading LTV without this returns the state before
  * the operation.
  */
-export async function refreshPosition(world: World, payer: KeyPairSigner, obligation: Address) {
+export async function refreshPosition(
+  world: World,
+  payer: KeyPairSigner,
+  obligation: Address,
+  referrerTokenStates: Address[] = [],
+) {
   await send(world, payer, [
     computeUnitLimitIx(400_000),
     ...refreshBoth(),
@@ -128,6 +180,8 @@ export async function refreshPosition(world: World, payer: KeyPairSigner, obliga
       [
         { address: USDY_RESERVE.address, role: 1 },
         { address: USDC_RESERVE.address, role: 1 },
+        // a referred obligation also needs one referrer token state per borrow
+        ...referrerTokenStates.map((address) => ({ address, role: 1 as const })),
       ],
       KLEND_PROGRAM,
     ) as unknown as Instruction,
@@ -139,9 +193,11 @@ export async function openPosition(
   world: World,
   depositUsdy: bigint,
   borrowUsdc: bigint,
+  referrer?: KeyPairSigner,
 ): Promise<Position> {
   const owner = await generateKeyPairSigner();
   world.svm.airdrop(owner.address, 10_000_000_000n as never);
+  const ref = referrer ? await setUpReferrer(world, referrer) : undefined;
 
   const usdySource = (await generateKeyPairSigner()).address;
   const usdcDest = (await generateKeyPairSigner()).address;
@@ -160,7 +216,8 @@ export async function openPosition(
         owner,
         feePayer: owner,
         userMetadata: metadata,
-        referrerUserMetadata: none<Address>(),
+        // klend copies the referrer into every obligation this owner opens
+        referrerUserMetadata: ref ? some(ref.metadata) : none<Address>(),
         rent: RENT,
         systemProgram: SYSTEM_PROGRAM,
       },
@@ -241,7 +298,7 @@ export async function openPosition(
           reserveSourceLiquidity: USDC_RESERVE.supplyVault,
           borrowReserveLiquidityFeeReceiver: USDC_RESERVE.feeVault,
           userDestinationLiquidity: usdcDest,
-          referrerTokenState: none<Address>(),
+          referrerTokenState: ref ? some(ref.usdcState) : none<Address>(),
           tokenProgram: TOKEN_PROGRAM,
           instructionSysvarAccount: SYSVAR_INSTRUCTIONS,
         },
@@ -253,7 +310,7 @@ export async function openPosition(
     ) as unknown as Instruction,
   ], 'borrow');
 
-  return { owner, obligation };
+  return { owner, obligation, referrerTokenStates: ref ? [ref.usdcState] : [] };
 }
 
 export { some };

@@ -51,6 +51,10 @@ The rule throughout: **the worst case is a network fee, never capital.**
 - **Honest accounting.** Planning prices the worst fee the bot would pay, then
   rechecks with the real one. Priority fees are capped twice (absolute, and a
   share of expected profit), and fees burned on failed attempts are counted.
+- **A failing loop stops itself.** A position whose liquidation fails is held
+  back longer each time, and once the fees burned on failed sends pass
+  `MAX_FAILED_FEES_SOL_PER_HOUR` the bot pauses and alerts. The flash fee is
+  read from chain on every scan; above 0.1% the bot stops planning.
 - **Off by default.** Sending happens only with `DRY_RUN=false` spelled exactly;
   any other value, or a typo, keeps the bot observing. Without its lookup table
   it refuses to start live, since the transaction would not fit.

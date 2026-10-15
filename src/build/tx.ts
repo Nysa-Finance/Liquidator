@@ -78,6 +78,8 @@ export function buildLiquidationMessage(args: {
    * rejected for size.
    */
   lookupTables?: LookupTables;
+  /** from `referrerTokenStates`; empty when the obligation has no referrer */
+  referrerTokenStates?: Address[];
 }) {
   const head: Instruction[] = [
     computeUnitLimitIx(args.computeUnitLimit),
@@ -92,6 +94,7 @@ export function buildLiquidationMessage(args: {
       obligation: args.plan.obligation,
       depositReserves: args.obligation.getDepositReserves(),
       borrowReserves: args.obligation.getBorrowReserves(),
+      referrerTokenStates: args.referrerTokenStates,
     }),
   ];
 

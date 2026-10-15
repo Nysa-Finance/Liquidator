@@ -165,7 +165,12 @@ Market `F4uLsGZT4YnHDcemtoYDz2LBZKLmwTB1wzkwS6oqygvy` — on-chain name
 **"USDY Ondo Market"** (renamed from "Nysa First Trial" between 13 and 18 Sep
 2026), owner `66pW72Fchnr34FGgXrxheGs3BbUsDSwJmGcK7m8Bz1Yv`.
 
-### 6.1 The market is empty [V]
+### 6.1 Market activity [V]
+
+As of 15 Oct 2026: **2 obligations**, about $15 of value, 6.09 USDY in the USDY
+vault, and USDC almost fully borrowed. Not yet open to the public.
+
+At first inspection, mid-September, the market was empty:
 
 | Measure | On-chain value |
 |---|---|
@@ -185,8 +190,9 @@ consumed it (`marketPriceSf = 1.14685008`, `stale = 0`).
 
 The curator did not repoint the index on the old feed — they moved the reserve
 to a different feed entirely. So **the two reserves no longer share one**: USDC
-still reads the main feed at chain `[20, 230]`, USDY reads the new feed at
-`[406]`. `refresh_reserve` checks the account passed against the one the reserve
+reads the main feed (chain `[20, 230]` then, `[20]` since ~10 Oct 2026, when
+index 230 was emptied), USDY reads the new feed at `[406]`, Kamino's
+PythLazer USDY/USD entry. `refresh_reserve` checks the account passed against the one the reserve
 names, so a single shared feed constant now fails with
 `InvalidScopePriceAccount`. Each reserve carries its own in `src/config.ts`, and
 the live drift test asserts both.
@@ -208,8 +214,8 @@ index  1 ->  2,514.37        (ETH)
 index  2 -> 77,689.33        (BTC)
 index  3 ->      0.000001    <- what the USDY reserve reads
 index  5 ->      0.000001
-index 79 ->      1.145563    <- the real USDY price
-index 97 ->      1.145563
+index 79 ->      1.145563    <- NOT USDY: a different yield token
+index 97 ->      1.145563       (Scope labels it Chainlink ONyc)
 ```
 
 Verified in `utils/prices/scope.rs`: `get_base_price` indexes the array directly
@@ -221,7 +227,9 @@ collateral, so nobody can borrow, so there is never debt to liquidate.
 Consistent with the rest — never-refreshed reserves, 0.1-token seeds, the name
 "First Trial": **the market is not finished being configured.**
 
-Fix belongs to the curator: `update_reserve_config`, scope chain `[3]` -> `[79]`.
+Index 79 was mistaken for USDY here because its price was close; on 15 Oct it
+read 1.1558 against USDY's 1.149. The curator's actual fix moved the reserve to
+feed `3t4JZcue…` index 406 (section 6.2). No code reads index 79.
 
 ### 6.3 The flash loan cannot come from this market [V]
 
@@ -229,7 +237,9 @@ Fix belongs to the curator: `update_reserve_config`, scope chain `[3]` -> `[79]`
 which holds 0.1 USDC here. But nothing ties the flash loan's reserve to the
 market of the liquidated obligation, so the bot borrows from the **Main Market**
 `7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF`, USDC reserve
-`D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59` (~23M USDC available).
+`D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59` (~6M USDC available in Oct 2026;
+it varies). The bot reads this reserve's fee on every scan rather than trusting
+the figure below, and stops planning if it rises above 0.1%.
 
 Fee there: `flash_loan_fee_sf = 11529215046068`, 2^60 scale -> **1e-5 = 0.001%**,
 charged *Exclusive* (on top of principal). Measured in LiteSVM: a 1,000 USDC
@@ -259,7 +269,7 @@ USDY reserve `rpTGWR3JDjjPfXLCg5Fx1GpSdUxPt1pxW7fwXGUT6js`:
 
 | Parameter | Value |
 |---|---|
-| `loan_to_value_pct` | 92 |
+| `loan_to_value_pct` | 90 (lowered from 92 on 29 Sep 2026) |
 | `liquidation_threshold_pct` | **95** |
 | `min_liquidation_bonus_bps` | **200** |
 | `max_liquidation_bonus_bps` | **500** |

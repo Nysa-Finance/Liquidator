@@ -1,7 +1,7 @@
 import { CFG, TARGET_MARKET } from './config.js';
 import { log } from './logger.js';
 import { say, telegram, telegramEnabled, TelegramError } from './alert.js';
-import { mode, note, status } from './status.js';
+import { failedFeesLastHourSol, mode, note, status } from './status.js';
 
 /**
  * Telegram commands, read from the alert chat by long polling: the bot asks
@@ -75,6 +75,10 @@ export async function handle(msg: Incoming, deps: Deps, botUsername?: string): P
         lines.push('⚠️ NOT SCANNING — check /last and the logs');
       }
       lines.push(`failed scans in a row: ${status.failures}`);
+      lines.push(
+        `fees burned on failed sends, last hour: ${failedFeesLastHourSol().toFixed(4)} SOL ` +
+          `(pauses above ${CFG.maxFailedFeesSolPerHour})`,
+      );
       lines.push(`rpc: ${deps.rpcHost()}`);
       const w = await deps.wallet();
       lines.push(w ? `SOL ${w.sol.toFixed(4)}${w.sol < CFG.minSolBalance ? ' ⚠️ LOW' : ''}` : 'SOL: rpc did not answer');
@@ -138,6 +142,8 @@ export async function handle(msg: Incoming, deps: Deps, botUsername?: string): P
       if (!status.paused) return `not paused, mode is ${mode()}`;
       if (!/^(confirm|confermo)$/i.test(arg!.trim())) return 'to resume, send: /resume CONFIRM';
       status.paused = null;
+      // a human looked and chose to go on: the breaker counts from zero again
+      status.failedFees.length = 0;
       note(`resumed by ${msg.fromName}`);
       log.warn({ by: msg.fromName, id: msg.fromId, mode: mode() }, 'resumed from telegram');
       return `resumed by ${msg.fromName}: mode is ${mode()}, as .env says`;

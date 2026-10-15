@@ -56,13 +56,24 @@ function obligationLtv(world: World, obligation: Parameters<typeof world.svm.get
   };
 }
 
-test('a borrowed position can be opened, pushed underwater, and liquidated at a profit', async () => {
+/**
+ * Opens a position, crashes the collateral price and liquidates it with the
+ * bot's builder. `referred` gives the borrower a referrer, which changes the
+ * accounts refresh_obligation demands.
+ */
+async function liquidationScenario(referred: boolean) {
   const world = await loadWorld({ sigverify: false });
   setPrices(world, USDY_START);
 
   await seedUsdcLiquidity(world, SEED_USDC);
-  const position = await openPosition(world, DEPOSIT_USDY, BORROW_USDC);
-  await refreshPosition(world, position.owner, position.obligation);
+  const position = await openPosition(
+    world,
+    DEPOSIT_USDY,
+    BORROW_USDC,
+    referred ? await generateKeyPairSigner() : undefined,
+  );
+  assert.equal(position.referrerTokenStates.length, referred ? 1 : 0);
+  await refreshPosition(world, position.owner, position.obligation, position.referrerTokenStates);
 
   const healthy = obligationLtv(world, position.obligation);
   assert.ok(healthy.ltv > 0, 'the position carries no debt');
@@ -70,7 +81,7 @@ test('a borrowed position can be opened, pushed underwater, and liquidated at a 
 
   // Push the collateral price down until the position crosses its threshold.
   setPrices(world, USDY_CRASHED);
-  await refreshPosition(world, position.owner, position.obligation);
+  await refreshPosition(world, position.owner, position.obligation, position.referrerTokenStates);
   const underwater = obligationLtv(world, position.obligation);
   assert.ok(
     underwater.ltv > underwater.threshold,
@@ -122,7 +133,7 @@ test('a borrowed position can be opened, pushed underwater, and liquidated at a 
   assert.ok(obligationAcc && 'data' in obligationAcc && obligationAcc.data);
   const decoded = Obligation.decode(Buffer.from(obligationAcc.data as Uint8Array));
 
-  const message = buildLiquidationMessage({
+  const build = (referrerTokenStates: typeof position.referrerTokenStates) => buildLiquidationMessage({
     signer: liquidator,
     pdas,
     atas,
@@ -143,7 +154,18 @@ test('a borrowed position can be opened, pushed underwater, and liquidated at a 
     blockhash: { blockhash: world.svm.latestBlockhash(), lastValidBlockHeight: 2n ** 63n - 1n },
     computeUnitLimit: 1_200_000,
     computeUnitPriceMicroLamports: 0n,
+    referrerTokenStates,
   });
+  const message = build(position.referrerTokenStates);
+
+  if (referred) {
+    // The bug this guards against: without the referrer's token state the
+    // refresh, and so the whole liquidation, is rejected.
+    await assert.rejects(
+      send(world, liquidator, [...build([]).instructions], 'liquidation without referrer accounts'),
+      /failed/,
+    );
+  }
 
   // LiteSVM never applies the network's packet limit, so without this the test
   // would happily pass on a transaction mainnet refuses to accept.
@@ -161,7 +183,7 @@ test('a borrowed position can be opened, pushed underwater, and liquidated at a 
 
   // Compare against the post-crash reading: debt value is priced, so a
   // measurement taken before the price moved is not comparable.
-  await refreshPosition(world, position.owner, position.obligation);
+  await refreshPosition(world, position.owner, position.obligation, position.referrerTokenStates);
   const after = obligationLtv(world, position.obligation);
   assert.ok(after.debtSf < underwater.debtSf, 'the debt did not shrink');
   assert.ok(after.ltv < underwater.ltv, 'the position did not get healthier');
@@ -176,6 +198,7 @@ test('a borrowed position can be opened, pushed underwater, and liquidated at a 
     `USDY residue ${residue} exceeds the 5% floor margin — seized amount mis-estimated`,
   );
 
+  if (referred) console.log('    with a referrer:');
   console.log(`    serialized ${bytes} bytes (network limit ${MAX_TRANSACTION_BYTES}) — needs a lookup table`);
   console.log(
     `    repaid ${Number(repay) / 1e6} USDC, seized ~${Number(minUsdy) / 1e6} USDY, ` +
@@ -187,4 +210,9 @@ test('a borrowed position can be opened, pushed underwater, and liquidated at a 
       `${(underwater.threshold * 100).toFixed(2)}%) → ${(after.ltv * 100).toFixed(2)}% after liquidation`,
   );
   assert.ok(decoded.borrows.length > 0);
-});
+}
+
+test('a borrowed position can be opened, pushed underwater, and liquidated at a profit', () =>
+  liquidationScenario(false));
+
+test('a position whose borrower has a referrer is liquidated too', () => liquidationScenario(true));

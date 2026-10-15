@@ -29,7 +29,27 @@ export const status = {
   paused: null as null | { by: string; at: number },
   market: null as MarketView | null,
   events: [] as Event[],
+  /** fees paid by sends that failed on-chain, for the circuit breaker */
+  failedFees: [] as { at: number; lamports: bigint }[],
 };
+
+const HOUR_MS = 3_600_000;
+
+export function failedFeesLastHourSol(now = Date.now()): number {
+  while (status.failedFees.length && now - status.failedFees[0]!.at > HOUR_MS) status.failedFees.shift();
+  return status.failedFees.reduce((sum, f) => sum + Number(f.lamports), 0) / 1e9;
+}
+
+/**
+ * Records the fee a failed send paid. Returns true when this pushed the last
+ * hour over MAX_FAILED_FEES_SOL_PER_HOUR and the bot has just paused itself.
+ */
+export function recordFailedFee(lamports: bigint, now = Date.now()): boolean {
+  if (lamports > 0n) status.failedFees.push({ at: now, lamports });
+  if (status.paused || failedFeesLastHourSol(now) <= CFG.maxFailedFeesSolPerHour) return false;
+  status.paused = { by: 'the circuit breaker', at: now };
+  return true;
+}
 
 const MAX_EVENTS = 10;
 

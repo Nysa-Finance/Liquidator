@@ -8,7 +8,10 @@ import { validateConfig } from '../src/config.js';
 import { USDC_RESERVE, USDY_RESERVE } from '../src/config.js';
 import { decodeWhirlpoolData, orcaContextFromAccounts } from '../src/build/orca.js';
 import { loadWorld } from './world.js';
-import { ORCA_POOL } from '../src/config.js';
+import { FLASH_SOURCE, ORCA_POOL } from '../src/config.js';
+
+/** today's Main Market USDC flash fee, 0.001% */
+const FLASH_FEE = new Decimal(FLASH_SOURCE.flashLoanFeeRate);
 
 /**
  * The decision layer, tested directly.
@@ -110,7 +113,7 @@ test('the swap is sized on the guaranteed minimum, never on the estimate', async
   const res = buildPlan({
     ...stubs({ debtUsdc: 20_000, depositUsdy: 20_000, closeFactor: 0.25, minFullLiq: 100 }),
     orca, slot: 1n, nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
-    fixedCostUsdc: new Decimal(0.01), flashAvailable: new Decimal(1e13),
+    fixedCostUsdc: new Decimal(0.01), flashFeeRate: FLASH_FEE, flashAvailable: new Decimal(1e13),
   } as never);
 
   assert.ok(res.ok, `plan rejected: ${res.ok === false ? res.reason : ''}`);
@@ -122,12 +125,30 @@ test('the swap is sized on the guaranteed minimum, never on the estimate', async
   );
 });
 
+test('the plan prices the live flash fee: a higher fee lowers the profit by exactly repay × the difference', async () => {
+  const orca = await realOrcaContext();
+  const plan = (flashFeeRate: Decimal) => {
+    const res = buildPlan({
+      ...stubs({ debtUsdc: 20_000, depositUsdy: 20_000, closeFactor: 0.25, minFullLiq: 100 }),
+      orca, slot: 1n, nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
+      fixedCostUsdc: new Decimal(0.01), flashAvailable: new Decimal(1e13), flashFeeRate,
+    } as never);
+    assert.ok(res.ok, `plan rejected: ${res.ok === false ? res.reason : ''}`);
+    return res.plan;
+  };
+  const today = plan(FLASH_FEE);
+  const raised = plan(new Decimal(0.0005)); // 0.05%, fifty times today's
+  const repayUsdc = Number(today.repayAmount) / 1e6; // 5,000
+  const drop = today.expectedProfitUsdc.minus(raised.expectedProfitUsdc).toNumber();
+  assert.ok(Math.abs(drop - repayUsdc * (0.0005 - FLASH_FEE.toNumber())) < 0.000002, `profit fell by ${drop}`);
+});
+
 test('the close factor caps a normal repayment', async () => {
   const orca = await realOrcaContext();
   const res = buildPlan({
     ...stubs({ debtUsdc: 20_000, depositUsdy: 20_000, closeFactor: 0.25, minFullLiq: 100 }),
     orca, slot: 1n, nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
-    fixedCostUsdc: new Decimal(0.01), flashAvailable: new Decimal(1e13),
+    fixedCostUsdc: new Decimal(0.01), flashFeeRate: FLASH_FEE, flashAvailable: new Decimal(1e13),
   } as never);
   assert.ok(res.ok);
   assert.equal(res.plan.repayAmount, 5_000_000_000n, '25% of a 20,000 USDC debt');
@@ -149,7 +170,7 @@ test('below min_full_liquidation_value_threshold the whole debt is repaid', asyn
     const res = buildPlan({
       ...stubs({ debtUsdc: 80, depositUsdy: 200, closeFactor: 0.25, minFullLiq: 100 }),
       orca, slot: 1n, nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
-      fixedCostUsdc: new Decimal(0), flashAvailable: new Decimal(1e13),
+      fixedCostUsdc: new Decimal(0), flashFeeRate: FLASH_FEE, flashAvailable: new Decimal(1e13),
     } as never);
     assert.ok(res.ok, `plan rejected: ${res.ok === false ? res.reason : ''}`);
     assert.equal(res.plan.repayAmount, 80_000_000n, 'the full debt, not 25% of it');
@@ -164,7 +185,7 @@ test('the default profit floor declines a forced full liquidation that is too sm
   const res = buildPlan({
     ...stubs({ debtUsdc: 80, depositUsdy: 200, closeFactor: 0.25, minFullLiq: 100 }),
     orca, slot: 1n, nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
-    fixedCostUsdc: new Decimal(0), flashAvailable: new Decimal(1e13),
+    fixedCostUsdc: new Decimal(0), flashFeeRate: FLASH_FEE, flashAvailable: new Decimal(1e13),
   } as never);
   assert.equal(res.ok, false);
   assert.equal(res.ok === false && res.reason, 'below-min-profit');
@@ -175,7 +196,7 @@ test('the 30,000 USD per-liquidation cap binds on a large debt', async () => {
   const res = buildPlan({
     ...stubs({ debtUsdc: 1_000_000, depositUsdy: 1_000_000, closeFactor: 0.25, minFullLiq: 100 }),
     orca, slot: 1n, nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
-    fixedCostUsdc: new Decimal(0.01), flashAvailable: new Decimal(1e13),
+    fixedCostUsdc: new Decimal(0.01), flashFeeRate: FLASH_FEE, flashAvailable: new Decimal(1e13),
   } as never);
   assert.ok(res.ok);
   // 25% would be 250,000 USDC; the market cap is 30,000
@@ -188,7 +209,7 @@ test('a plan is refused when the flash source cannot fund the repayment', async 
     ...stubs({ debtUsdc: 20_000, depositUsdy: 20_000, closeFactor: 0.25, minFullLiq: 100 }),
     orca, slot: 1n, nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
     fixedCostUsdc: new Decimal(0.01),
-    flashAvailable: new Decimal(1_000_000), // 1 USDC against a 5,000 USDC repayment
+    flashFeeRate: FLASH_FEE, flashAvailable: new Decimal(1_000_000), // 1 USDC against a 5,000 USDC repayment
   } as never);
   assert.equal(res.ok, false);
   assert.equal(res.ok === false && res.reason, 'insufficient-flash-liquidity');

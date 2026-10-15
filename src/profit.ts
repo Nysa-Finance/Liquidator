@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 import type { KaminoMarket, KaminoObligation, KaminoReserve } from '@kamino-finance/klend-sdk';
 import type { Address } from '@solana/kit';
-import { CFG, FLASH_SOURCE, USDC_RESERVE, USDY_RESERVE } from './config.js';
+import { CFG, USDC_RESERVE, USDY_RESERVE } from './config.js';
 import type { Eligibility } from './eligibility.js';
 import { quoteUsdyToUsdc, spotPrice, type OrcaContext } from './build/orca.js';
 
@@ -58,6 +58,8 @@ export function buildPlan(args: {
   fixedCostUsdc: Decimal;
   /** base units of USDC the flash source reserve can lend right now */
   flashAvailable: Decimal;
+  /** the flash source's fee as a rate, read live (0.00001 = 0.001%) */
+  flashFeeRate: Decimal;
 }): PlanResult {
   const { obligation, debtReserve, collReserve, eligibility, orca } = args;
 
@@ -155,7 +157,7 @@ export function buildPlan(args: {
   }
 
   // ── 6. profit ─────────────────────────────────────────────────────────
-  const flashFee = repay.mul(FLASH_SOURCE.flashLoanFeeRate).ceil();
+  const flashFee = repay.mul(args.flashFeeRate).ceil();
   const usdcOut = new Decimal(quote.tokenEstOut.toString());
   const usdcOutWorst = new Decimal(quote.tokenMinOut.toString());
 

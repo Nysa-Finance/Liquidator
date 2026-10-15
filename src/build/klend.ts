@@ -1,11 +1,15 @@
 import BN from 'bn.js';
 import {
+  DEFAULT_PUBLIC_KEY,
   flashBorrowReserveLiquidity,
   flashRepayReserveLiquidity,
+  KaminoObligation,
   liquidateObligationAndRedeemReserveCollateralV2,
   refreshObligation,
   refreshReserve,
   lendingMarketAuthPda,
+  referrerTokenStatePda,
+  type KaminoMarket,
 } from '@kamino-finance/klend-sdk';
 import type { Address, Instruction, KeyPairSigner, AccountMeta } from '@solana/kit';
 import { AccountRole, none, some } from '@solana/kit';
@@ -77,6 +81,21 @@ export function refreshObligationIx(args: {
     remaining,
     KLEND_PROGRAM,
   ) as unknown as Instruction;
+}
+
+/**
+ * The `referrer_token_state` accounts refresh_obligation needs when the
+ * obligation has a referrer: one per borrow, in the order klend checks them
+ * (borrows accruing referral fees first). Without them the refresh, and so the
+ * whole liquidation, fails; any borrower can set a referrer.
+ *
+ * Ordering and derivation are the SDK's own, so they track klend.
+ */
+export async function referrerTokenStates(market: KaminoMarket, obligation: KaminoObligation): Promise<Address[]> {
+  const referrer = obligation.state.referrer;
+  if (referrer === DEFAULT_PUBLIC_KEY) return [];
+  const ordered = KaminoObligation.orderBorrowReservesForReferrerTokenStates(market, obligation.getBorrowReserves());
+  return Promise.all(ordered.map((reserve) => referrerTokenStatePda(referrer, reserve, KLEND_PROGRAM)));
 }
 
 /**

@@ -331,18 +331,31 @@ export function transactionCostUsdc(
   return new Decimal((base + priority).toString()).div(1e9).mul(solPriceUsd);
 }
 
+const U64_MAX = (1n << 64n) - 1n;
+
 /**
- * Reads how much the flash source reserve can lend right now.
+ * Reads the flash source reserve: what it can lend right now, and what it
+ * charges. The fee is read live because flash_repay takes the real one from
+ * the same account that holds the profits: a hard-coded fee would let a raised
+ * fee eat them while every liquidation still "succeeds".
  *
  * It sits in a different lending market from the target, so it is not in that
  * market's reserve map — looking it up there silently returns nothing and the
  * pre-check never fires.
  */
-export async function readFlashLiquidity(rpc: RpcClient): Promise<Decimal> {
+export async function readFlashSource(
+  rpc: RpcClient,
+): Promise<{ available: Decimal; feeRate: Decimal; disabled: boolean }> {
   const acc = await rpc.getAccountInfo(FLASH_SOURCE.reserve, { encoding: 'base64' }).send();
-  if (!acc.value) return new Decimal(0);
+  if (!acc.value) return { available: new Decimal(0), feeRate: new Decimal(0), disabled: true };
   const reserve = Reserve.decode(Buffer.from((acc.value.data as [string, string])[0], 'base64'));
-  return new Decimal(reserve.liquidity.totalAvailableAmount.toString());
+  const sf = BigInt(reserve.config.fees.flashLoanFeeSf.toString());
+  return {
+    available: new Decimal(reserve.liquidity.totalAvailableAmount.toString()),
+    // klend's marker for "flash loans off" is u64::MAX
+    disabled: sf === U64_MAX,
+    feeRate: new Decimal(sf.toString()).div(new Decimal(2).pow(60)),
+  };
 }
 
 /**
@@ -352,23 +365,27 @@ export async function readFlashLiquidity(rpc: RpcClient): Promise<Decimal> {
  * paying a fee each time. Back-off doubles per consecutive failure.
  */
 export class Quarantine {
-  private readonly held = new Map<string, { until: bigint; strikes: number }>();
+  private readonly held = new Map<string, { until: bigint; strikes: number; lastAt: number }>();
 
   isHeld(obligation: string, slot: bigint): boolean {
     const e = this.held.get(obligation);
-    if (!e) return false;
-    if (slot >= e.until) {
-      this.held.delete(obligation);
-      return false;
-    }
-    return true;
+    return e !== undefined && slot < e.until;
   }
 
-  record(obligation: string, slot: bigint, reason: string): void {
-    const strikes = (this.held.get(obligation)?.strikes ?? 0) + 1;
+  /** A liquidation of this obligation landed: forget its failures. */
+  clear(obligation: string): void {
+    this.held.delete(obligation);
+  }
+
+  record(obligation: string, slot: bigint, reason: string, now = Date.now()): void {
+    // Strikes outlive the hold, or the back-off never grows: the entry used to
+    // be deleted when the hold expired, so every failure was strike 1. An hour
+    // without a failure starts the count over.
+    const prev = this.held.get(obligation);
+    const strikes = prev && now - prev.lastAt < 3_600_000 ? prev.strikes + 1 : 1;
     // 30 slots (~12s), doubling per strike, capped at roughly 20 minutes
     const slots = BigInt(Math.min(30 * 2 ** (strikes - 1), 3000));
-    this.held.set(obligation, { until: slot + slots, strikes });
+    this.held.set(obligation, { until: slot + slots, strikes, lastAt: now });
     log.debug({ obligation, strikes, holdSlots: slots.toString(), reason }, 'quarantined');
   }
 }

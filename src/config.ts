@@ -69,7 +69,6 @@ export const USDY_RESERVE = {
   maxLiquidationBonusBps: 500,
   protocolLiquidationFeePct: 0,
   borrowFactorPct: 100,
-  hasFarms: false,
 } as const;
 
 export const USDC_RESERVE = {
@@ -86,7 +85,6 @@ export const USDC_RESERVE = {
   // the curator dropped it. Read from chain by the SDK; kept for the drift test.
   scopeChain: [20],
   borrowFactorPct: 100,
-  hasFarms: false,
 } as const;
 
 /**
@@ -182,6 +180,11 @@ export const CFG = {
   },
   /** Below this the wallet cannot pay for many more sends; alert before it runs dry. */
   get minSolBalance() { return num('MIN_SOL_BALANCE', 0.05); },
+  /**
+   * Circuit breaker: SOL burned on failed sends in the last hour above which the
+   * bot pauses itself. Whatever the cause, a loop of failing sends stops here.
+   */
+  get maxFailedFeesSolPerHour() { return num('MAX_FAILED_FEES_SOL_PER_HOUR', 0.01); },
   get logLevel() { return process.env.LOG_LEVEL ?? 'info'; },
 } as const;
 
@@ -202,6 +205,7 @@ export function validateConfig(): void {
     maxPriorityProfitFraction: CFG.maxPriorityProfitFraction,
     scanIntervalMs: CFG.scanIntervalMs,
     minSolBalance: CFG.minSolBalance,
+    maxFailedFeesSolPerHour: CFG.maxFailedFeesSolPerHour,
   };
 
   for (const [k, v] of Object.entries(c)) {

@@ -219,7 +219,15 @@ The bot is built to run unattended:
 Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to get alerts: start and stop,
 fatal error, RPC down (5 failed ticks in a row) and recovered, wallet SOL below
 `MIN_SOL_BALANCE` (checked every 5 minutes), every liquidation won or lost, and a
-daily summary. The same alert is not repeated within 10 minutes. Without the two
+daily summary, plus a price-gap alert when Orca and the oracle diverge past
+`MAX_ORACLE_DIVERGENCE_BPS`, and a stop alert if the flash fee rises above 0.1%.
+The same alert is not repeated within 10 minutes.
+
+**Circuit breaker.** Fees paid by sends that fail on-chain are counted over a
+rolling hour; past `MAX_FAILED_FEES_SOL_PER_HOUR` (default 0.01 SOL) the bot
+pauses itself and alerts. It keeps scanning; `/resume CONFIRM` sends again and
+restarts the count. A position whose liquidation keeps failing is held back
+longer each time (12 s doubling to ~20 min), and forgotten after a success. Without the two
 settings alerts are off and everything is still in `journalctl`.
 
 The same chat takes commands, read by long polling (no port opened):

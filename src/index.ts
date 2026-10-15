@@ -15,13 +15,13 @@ import {
 } from './config.js';
 import { log } from './logger.js';
 import { alert } from './alert.js';
-import { maySend, mode, note, status, type MarketView } from './status.js';
+import { maySend, mode, note, recordFailedFee, status, type MarketView } from './status.js';
 import { startCommands } from './commands.js';
 import { ledgerInstant, loadSigner, makeRpcPool, type RpcPool } from './rpc.js';
 import { evaluate } from './eligibility.js';
 import { buildPlan } from './profit.js';
 import { loadOrcaContext, spotPrice } from './build/orca.js';
-import { loadPdas } from './build/klend.js';
+import { loadPdas, referrerTokenStates } from './build/klend.js';
 import { buildLiquidationMessage, type Atas, type LookupTables } from './build/tx.js';
 import {
   InFlightGuard,
@@ -30,7 +30,7 @@ import {
   transactionCostUsdc,
   PriorityFeeOracle,
   Quarantine,
-  readFlashLiquidity,
+  readFlashSource,
   reconcile,
   sendAndConfirm,
   signToWire,
@@ -38,6 +38,11 @@ import {
 } from './execute.js';
 
 const RECENT_SLOT_DURATION_MS = 450;
+/**
+ * Above this flash fee (0.1%, a hundred times today's) the bot stops planning
+ * and asks for a human: a change that size is a decision, not a parameter.
+ */
+const MAX_FLASH_FEE_RATE = 0.001;
 const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 const DEFAULT_CU_LIMIT = 420_000;
 
@@ -95,7 +100,8 @@ async function tick(ctx: {
 
   // The flash source sits in a different lending market, so it is not in this
   // market's reserve map and has to be read on its own.
-  const flashAvailable = await readFlashLiquidity(rpc);
+  const flash = await readFlashSource(rpc);
+  const flashAvailable = flash.available;
 
   // Both the fee ceiling and the per-transaction cost are denominated in SOL but
   // capped in USDC, so they need a price. Read once per tick from the same feed
@@ -128,10 +134,30 @@ async function tick(ctx: {
   };
   status.market = view;
 
+  if (flash.disabled || flash.feeRate.gt(MAX_FLASH_FEE_RATE)) {
+    const what = flash.disabled ? 'flash loans are disabled' : `flash fee is ${flash.feeRate.mul(100).toFixed(4)}%`;
+    log.error({ feeRate: flash.feeRate.toString(), disabled: flash.disabled }, 'flash source changed — not planning');
+    note(`not planning: ${flash.disabled ? 'flash loans disabled' : 'flash fee above 0.1%'}`);
+    void alert('flash-fee', `NOT PLANNING — on the Main Market USDC reserve ${what}. Check before resuming.`);
+    return;
+  }
+
   if (obligations.length === 0) return;
 
   const orca = await loadOrcaContext(rpc, slot);
   view.orcaPrice = spotPrice(orca.pool);
+
+  // The planner already refuses to liquidate across this gap; say so out loud,
+  // because a gap this wide can mean the oracle itself is wrong or was remapped.
+  const divergenceBps = Math.abs(view.orcaPrice / view.oraclePrice - 1) * 10_000;
+  if (divergenceBps > CFG.maxOracleDivergenceBps) {
+    note(`USDY Orca and oracle prices more than ${CFG.maxOracleDivergenceBps} bps apart`);
+    void alert(
+      'divergence',
+      `USDY price gap: Orca ${view.orcaPrice.toFixed(6)} vs oracle ${view.oraclePrice.toFixed(6)} USDC ` +
+        `(${divergenceBps.toFixed(0)} bps, limit ${CFG.maxOracleDivergenceBps}). Liquidations are skipped until it closes.`,
+    );
+  }
 
   for (const ob of obligations) {
     const key = ob.obligationAddress as string;
@@ -161,6 +187,7 @@ async function tick(ctx: {
         solPrice,
       ),
       flashAvailable,
+      flashFeeRate: flash.feeRate,
     });
     if (!planRes.ok) {
       log.debug({ obligation: key, reason: planRes.reason }, 'plan rejected');
@@ -175,6 +202,7 @@ async function tick(ctx: {
     }
 
     try {
+      const referrerStates = await referrerTokenStates(ctx.market, ob);
       const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
 
       const message = buildLiquidationMessage({
@@ -188,14 +216,22 @@ async function tick(ctx: {
         computeUnitLimit: DEFAULT_CU_LIMIT,
         computeUnitPriceMicroLamports: 1_000n,
         lookupTables: ctx.lookupTables,
+        referrerTokenStates: referrerStates,
       });
 
       const wire = await signToWire(message);
+      // Read at the simulation's own commitment, and never guessed: a 0
+      // fallback made the whole balance look like profit and passed the check.
       const balBefore = await rpc
-        .getTokenAccountBalance(ctx.atas.usdc)
+        .getTokenAccountBalance(ctx.atas.usdc, { commitment: 'processed' })
         .send()
         .then((r) => BigInt(r.value.amount))
-        .catch(() => 0n);
+        .catch(() => null);
+      if (balBefore === null) {
+        log.warn({ obligation: key }, 'USDC balance unreadable before simulation — not submitting');
+        note(`${short(key)} skipped: USDC balance unreadable before simulation`);
+        continue;
+      }
 
       const sim = await simulate(rpc, wire, ctx.atas.usdc, balBefore);
       if (!sim.ok) {
@@ -208,11 +244,16 @@ async function tick(ctx: {
         continue;
       }
 
-      const simProfitUsdc = sim.usdcDelta === null
-        ? null
-        : new Decimal(sim.usdcDelta.toString()).div(10 ** USDC_RESERVE.decimals);
+      // Without the post-simulation balance the profit check cannot run, and a
+      // check that cannot run must not count as passed.
+      if (sim.usdcDelta === null) {
+        log.warn({ obligation: key }, 'simulation returned no USDC balance — not submitting');
+        note(`${short(key)} skipped: simulation returned no USDC balance`);
+        continue;
+      }
+      const simProfitUsdc = new Decimal(sim.usdcDelta.toString()).div(10 ** USDC_RESERVE.decimals);
 
-      if (simProfitUsdc !== null && simProfitUsdc.lt(CFG.minProfitUsdc)) {
+      if (simProfitUsdc.lt(CFG.minProfitUsdc)) {
         log.warn(
           { obligation: key, simProfitUsdc: simProfitUsdc.toString() },
           'simulated profit below threshold — not submitting',
@@ -228,7 +269,7 @@ async function tick(ctx: {
           bonusBps: plan.bonusRate.mul(10_000).toFixed(0),
           rho: plan.oracleRatio.toFixed(6),
           expectedProfit: plan.expectedProfitUsdc.toFixed(6),
-          simProfit: simProfitUsdc?.toFixed(6) ?? 'n/a',
+          simProfit: simProfitUsdc.toFixed(6),
           cu: sim.unitsConsumed,
         },
         'plan accepted',
@@ -290,6 +331,7 @@ async function tick(ctx: {
         computeUnitLimit: cuLimit,
         computeUnitPriceMicroLamports: priorityPrice,
         lookupTables: ctx.lookupTables,
+        referrerTokenStates: referrerStates,
       });
       const finalWire = await signToWire(finalMsg);
 
@@ -297,6 +339,7 @@ async function tick(ctx: {
 
       if (res.landed && res.err === null) {
         ctx.fees.onSuccess();
+        ctx.quarantine.clear(key);
 
         // What the chain recorded, not what the plan predicted. A model that is
         // systematically optimistic only shows up in this comparison.
@@ -326,13 +369,31 @@ async function tick(ctx: {
           log.info({ signature: res.signature }, 'liquidation confirmed, settlement unreadable');
         }
       } else {
-        ctx.fees.onRaceLost();
+        // Only a send that never landed says the fee was too low; one that
+        // landed and failed would fail again at any price.
+        if (!res.landed) ctx.fees.onRaceLost();
+        // Held back like a failed simulation, and longer each time: a send that
+        // fails on-chain used to be retried on the very next scan.
+        ctx.quarantine.record(key, slot, String(res.err));
         // A transaction that landed with an error still paid its fee; one that
-        // never landed paid nothing.
+        // never landed paid nothing. If the settlement cannot be read, assume
+        // the fee this transaction was built to pay.
         const settled = res.landed
           ? await reconcile(rpc, res.signature, ctx.signer.address, USDC_RESERVE.liquidityMint)
           : null;
-        ctx.ledger.loss(settled?.feeLamports ?? 0n);
+        const paid = res.landed
+          ? (settled?.feeLamports ?? 5_000n + (BigInt(cuLimit) * priorityPrice) / 1_000_000n)
+          : 0n;
+        ctx.ledger.loss(paid);
+        if (recordFailedFee(paid)) {
+          log.error({ maxPerHour: CFG.maxFailedFeesSolPerHour }, 'circuit breaker: paused after fees burned on failed sends');
+          note('PAUSED by the circuit breaker: too many fees burned on failed sends');
+          void alert(
+            'breaker',
+            `AUTO-PAUSED — more than ${CFG.maxFailedFeesSolPerHour} SOL burned on failed sends in the last hour. ` +
+              `Nothing is sent until /resume CONFIRM. Check /last.`,
+          );
+        }
         note(`${short(key)} did not land: ${String(res.err).slice(0, 120)}`);
         void alert('loss', `a liquidation did not land: ${String(res.err).slice(0, 200)}`);
         log.warn(

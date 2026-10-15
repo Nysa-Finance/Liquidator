@@ -59,7 +59,9 @@ test('/resume needs CONFIRM and returns to .env, never past it', async () => {
   await say('/pause');
   assert.match((await say('/resume'))!, /\/resume CONFIRM/);
   assert.equal(mode(), 'PAUSED');
+  status.failedFees.push({ at: Date.now(), lamports: 9_000_000n });
   assert.match((await say('/resume CONFIRM'))!, /mode is DRY RUN/);
+  assert.equal(status.failedFees.length, 0, 'resuming starts the breaker window over');
   assert.equal(mode(), 'DRY RUN');
   assert.equal(maySend(), false);
 });

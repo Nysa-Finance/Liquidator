@@ -1,4 +1,6 @@
 .env
+liquidator*.json
+keypair*.json
 *.json.key
 .git
 node_modules
