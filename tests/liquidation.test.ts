@@ -37,7 +37,10 @@ const USDY_CRASHED = 1.04;
 
 const DEPOSIT_USDY = 20_000_000_000n; // 20,000 USDY
 const BORROW_USDC = 20_000_000_000n; // 20,000 USDC, ~92% LTV at the starting price
-const SEED_USDC = 200_000_000_000n; // lender-supplied borrowable liquidity
+// Lender-supplied liquidity for the borrow: enough for it and no more. The
+// fixtures are the live reserve, which has real deposits under a 250,000 USDC
+// cap, so seeding a large round sum stops fitting as the market grows.
+const SEED_USDC = 25_000_000_000n;
 
 function setPrices(world: World, usdy: number) {
   setScopePrice(world, USDY_RESERVE.scopeFeed, USDY_IDX!, usdy);
