@@ -77,6 +77,8 @@ test('/last counts a repeated event instead of filling up', async () => {
   note('started in LIVE');
   assert.equal(status.events.length, 2);
   assert.match((await say('/last'))!, /429\)\s+\(×30\)/);
+  // day and month, not just the time: events can be days old
+  assert.match((await say('/last'))!, /^\d{2}\/\d{2}, \d{2}:\d{2}:\d{2}  /m);
 });
 
 test('polling skips the backlog, executes new commands and replies in the chat', async () => {

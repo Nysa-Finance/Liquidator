@@ -41,7 +41,17 @@ const ago = (ms: number): string => {
 };
 const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
-const romeTime = (ms: number) => new Date(ms).toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome' });
+// Day and month too: events stay in memory since the last start, which can be
+// days ago, and a bare time cannot tell yesterday from today.
+const romeTime = (ms: number) =>
+  new Date(ms).toLocaleString('it-IT', {
+    timeZone: 'Europe/Rome',
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 
 /** A scan older than this means the loop is stuck or the RPC is down. */
 const staleAfterMs = () => Math.max(60_000, CFG.scanIntervalMs * 6);
