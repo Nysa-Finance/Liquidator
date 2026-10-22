@@ -7,7 +7,8 @@
 #
 #   /opt/liquidator is mode 700: run compose by file path, not after a cd
 #   alias liq='sudo docker compose -f /opt/liquidator/app/docker-compose.yml'
-#   liq up -d --build      start, or apply an update after git pull
+#   liq up -d --build      start
+#   liq build --pull && liq up -d   update after git pull, with the latest Node patches
 #   liq logs -f            follow the logs
 services:
   liquidator:

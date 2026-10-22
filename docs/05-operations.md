@@ -157,7 +157,10 @@ liq logs -f
 `/opt/liquidator` is mode 700, so a non-root login cannot `cd` into it: point
 compose at the file instead (the alias, worth adding to `~/.bashrc`).
 
-Update: `sudo git -C /opt/liquidator/app pull && liq up -d --build`.
+Update: `sudo git -C /opt/liquidator/app pull && liq build --pull && liq up -d`.
+`--pull` fetches the latest `node:24-slim`: without it Docker reuses the cached
+base image and Node security releases never reach the container. Check with
+`liq exec liquidator node -v`.
 
 Security check, read-only, worth re-running monthly:
 `sudo bash /opt/liquidator/app/deploy/check-security.sh`. It verifies SSH,
